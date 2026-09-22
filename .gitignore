@@ -1,0 +1,42 @@
+# Java: bytecode, archives and VM crash logs
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+*.log
+hs_err_pid*
+replay_pid*
+# Keep build wrappers tracked
+!gradle/wrapper/gradle-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar
+# Maven / Gradle / IDE
+.gradle/
+.kotlin/
+build/
+target/
+out/
+bin/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+# Android
+local.properties
+.cxx/
+.externalNativeBuild/
+*.apk
+*.aab
+*.jks
+*.keystore
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
