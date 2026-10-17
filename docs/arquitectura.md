@@ -30,7 +30,8 @@ nunca de repositorios JPA o clientes HTTP concretos. Dominio y aplicación no
 importan infraestructura. Entidades JPA y DTO no cruzan esas fronteras.
 Los mappers son componentes explícitos y toleran entradas nulas.
 
-RES-02 incorporará migraciones y persistencia de usuarios/procesos propios.
+RES-02 incorpora Flyway y persistencia de usuarios/procesos propios; ver
+[modelo y límites de persistencia](persistencia.md).
 Hibernate está configurado con `validate`: no crea ni modifica tablas.
 El servicio de catálogo tendrá su propia base y credenciales, sin permisos
 cruzados. El Compose actual es únicamente el arranque local de reservas;
