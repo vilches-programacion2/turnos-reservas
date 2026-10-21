@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export JAVA_HOME="$project_dir/.java-env/jdk"
+export MAVEN_USER_HOME="$project_dir/.java-env/maven"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+if [[ ! -x "$JAVA_HOME/bin/javac" ]]; then
+    echo 'Prepará el entorno con ./scripts/setup-java-env.sh /ruta/a/un/jdk-25' >&2
+    exit 1
+fi
+
+cd -- "$project_dir"
+exec "$project_dir/mvnw" "-Dmaven.repo.local=$project_dir/.java-env/repository" "$@"

@@ -154,8 +154,8 @@ headers, JWT ni entidades JPA.
 
 - Confirmar con la cátedra la URL final y las credenciales de integración por
   un canal seguro.
-- PostgreSQL 17 es el motor elegido; RES-02 definirá las migraciones de los
-  datos propios dentro de su base exclusiva.
+- PostgreSQL 17, Flyway SQL y un registro por proceso son las decisiones
+  aprobadas para la base exclusiva de reservas; ver [persistencia](persistencia.md).
 - Cerrar los DTO y endpoints internos entre `turnos-reservas`,
   `turnos-catalogo` y la aplicación KMP.
 - Definir la máquina de estados completa y sus transiciones inválidas antes de

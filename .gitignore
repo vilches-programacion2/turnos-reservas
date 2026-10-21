@@ -18,7 +18,7 @@ replay_pid*
 .kotlin/
 build/
 target/
-out/
+/out/
 bin/
 .idea/
 *.iml
@@ -34,6 +34,7 @@ local.properties
 *.jks
 *.keystore
 # Local configuration and secrets
+.java-env/
 .env
 .env.*
 !.env.example
