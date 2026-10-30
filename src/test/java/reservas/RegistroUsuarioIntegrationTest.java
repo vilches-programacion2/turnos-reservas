@@ -41,6 +41,7 @@ class RegistroUsuarioIntegrationTest {
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
+        JwtTestKeys.configurar(registry);
         registry.add("spring.datasource.url", DATABASE::getJdbcUrl);
         registry.add("spring.datasource.username", DATABASE::getUsername);
         registry.add("spring.datasource.password", DATABASE::getPassword);
@@ -186,9 +187,9 @@ class RegistroUsuarioIntegrationTest {
             assertThat(response.body()).doesNotContain("secreto-invalido");
         }
         var get = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/register")).GET().build();
-        assertThat(client.send(get, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);
+        assertThat(client.send(get, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
         assertThat(client.send(request("/api/users", "{}"), HttpResponse.BodyHandlers.ofString()).statusCode())
-                .isEqualTo(403);
+                .isEqualTo(401);
     }
 
     private Map<String, Object> registro() {

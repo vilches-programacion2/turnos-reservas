@@ -34,6 +34,7 @@ local.properties
 *.jks
 *.keystore
 # Local configuration and secrets
+secrets/
 .java-env/
 .env
 .env.*

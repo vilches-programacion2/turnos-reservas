@@ -27,6 +27,7 @@ class ServiceBootstrapTest {
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
+        JwtTestKeys.configurar(registry);
         registry.add("spring.datasource.url", DATABASE::getJdbcUrl);
         registry.add("spring.datasource.username", DATABASE::getUsername);
         registry.add("spring.datasource.password", DATABASE::getPassword);
@@ -43,9 +44,9 @@ class ServiceBootstrapTest {
         assertHealth("/actuator/health", 200, "UP");
         assertHealth("/actuator/health/readiness", 200, "UP");
         assertHealth("/actuator/health/liveness", 200, "UP");
-        assertThat(get("/api/users").statusCode()).isEqualTo(403);
-        assertThat(get("/actuator/env").statusCode()).isEqualTo(403);
-        assertThat(get("/v3/api-docs").statusCode()).isEqualTo(403);
+        assertThat(get("/api/users").statusCode()).isEqualTo(401);
+        assertThat(get("/actuator/env").statusCode()).isEqualTo(401);
+        assertThat(get("/v3/api-docs").statusCode()).isEqualTo(401);
 
         DATABASE.stop();
         assertHealth("/actuator/health/readiness", 503, "DOWN");
