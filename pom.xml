@@ -8,7 +8,7 @@
         <version>4.1.0</version>
         <relativePath/>
     </parent>
-    <groupId>ar.edu.um</groupId>
+    <groupId>reservas</groupId>
     <artifactId>turnos-reservas</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>turnos-reservas</name>
@@ -91,6 +91,11 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.86</version>
         </dependency>
     </dependencies>
 
