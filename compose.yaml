@@ -23,6 +23,13 @@ services:
       DB_USER: ${DB_USER:-reservas}
       DB_PASSWORD: ${DB_PASSWORD:?Definir DB_PASSWORD en .env}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:?Definir JWT_PRIVATE_KEY en .env}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?Definir JWT_PUBLIC_KEY en .env}
+      JWT_ISSUER: ${JWT_ISSUER:-https://turnos-reservas.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-turnos-reservas}
+      JWT_TIME_TO_LIVE: ${JWT_TIME_TO_LIVE:-30m}
+    volumes:
+      - ./secrets:/run/secrets:ro
     ports:
       - "127.0.0.1:${APP_PORT:-8081}:8080"
     depends_on:
