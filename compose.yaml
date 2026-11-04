@@ -27,7 +27,11 @@ services:
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:?Definir JWT_PUBLIC_KEY en .env}
       JWT_ISSUER: ${JWT_ISSUER:-https://turnos-reservas.local}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-turnos-reservas}
+      JWT_CATALOG_AUDIENCE: ${JWT_CATALOG_AUDIENCE:-turnos-catalogo}
       JWT_TIME_TO_LIVE: ${JWT_TIME_TO_LIVE:-30m}
+      CATALOGO_BASE_URL: ${CATALOGO_BASE_URL:-}
+      CATALOGO_CONNECT_TIMEOUT: ${CATALOGO_CONNECT_TIMEOUT:-3s}
+      CATALOGO_READ_TIMEOUT: ${CATALOGO_READ_TIMEOUT:-5s}
     volumes:
       - ./secrets:/run/secrets:ro
     ports:
