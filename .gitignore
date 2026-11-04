@@ -10,6 +10,7 @@
 *.log
 hs_err_pid*
 replay_pid*
+.attach_pid*
 # Keep build wrappers tracked
 !gradle/wrapper/gradle-wrapper.jar
 !.mvn/wrapper/maven-wrapper.jar
@@ -35,6 +36,7 @@ local.properties
 *.keystore
 # Local configuration and secrets
 secrets/
+.local/
 .java-env/
 .env
 .env.*

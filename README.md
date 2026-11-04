@@ -1,118 +1,85 @@
 # turnos-reservas
 
-Servicio Java y Spring Boot para autenticación de usuarios, disponibilidad y gestión de reservas.
-
-## Estado
-Primera entrega de **RES-01 / Base y contratos**: bootstrap Java 25 y Spring
-Boot 4.1.0, configuración externa, PostgreSQL, logs con Lombok y controles de
-salud. Registro, JWT y reservas todavía no están implementados.
-
-RES-02 agrega migraciones Flyway y adaptadores de persistencia de usuarios y
-procesos, con propiedad local y control de actualizaciones concurrentes. Ver
-[modelo de persistencia](docs/persistencia.md). El flujo de reservas y sus
-endpoints todavía están pendientes.
-
-Este repositorio alojará el Docker Compose general y el diagrama de arquitectura. Usuarios y autenticación pertenecen a este servicio.
+Backend de usuarios y reservas: Java 25, Spring Boot, PostgreSQL y Flyway.
+Implementa registro, autenticación con JWT RS256 e integración HTTP con catálogo.
+El flujo de reservas sigue en desarrollo.
 
 ## Ejecutar
 
-Con Docker y Docker Compose:
+Requisitos: Docker Compose y OpenSSL. Para desarrollo con Maven: JDK 25.
 
 ```bash
 cp .env.example .env
-# Editar DB_PASSWORD en .env con una clave local.
+# Configurar DB_PASSWORD en .env.
+mkdir -p secrets
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out secrets/private.pem
+openssl pkey -in secrets/private.pem -pubout -out secrets/public.pem
+```
+
+Conservar las claves entre ejecuciones. Compose monta `secrets/` como solo
+lectura; el usuario del contenedor (`10001:10001`) necesita leer la privada y
+acceder al directorio. Configurar grupo y permisos acordes al entorno, sin hacer
+la privada legible para todos. `.env` y `secrets/` están excluidos de Git.
+
+```bash
 docker compose up --build -d
 curl --fail http://localhost:8081/actuator/health/readiness
-docker compose logs -f reservas
 docker compose down
 ```
 
-La primera construcción descarga dependencias. El volumen conserva la base al
-detener los contenedores. Los puertos se publican solo en localhost. Cambiar
-DB_PASSWORD después de crear el volumen no modifica la clave ya almacenada
-por PostgreSQL: debe rotarse también dentro de la base.
+El volumen conserva los datos de PostgreSQL. Variables de configuración en
+[.env.example](.env.example). Al ejecutar Java en el host, proporcionar las
+variables de entorno y usar rutas `file:` absolutas del host para las claves;
+Spring no carga `.env` automáticamente.
 
-Para desarrollar en el entorno Java aislado, prepararlo una vez con un JDK 25
-ya descargado (también puede provenir de SDKMAN):
+## API disponible
 
-```bash
-./scripts/setup-java-env.sh /ruta/al/jdk-25
-./mvnw-local -version
-./mvnw-local compile
-```
+| Método | Ruta | Acceso |
+| --- | --- | --- |
+| POST | `/api/register` | Público, registro de usuario. |
+| POST | `/api/authenticate` | Público, `username` y `password`; devuelve `id_token`. |
+| GET | `/api/account` | JWT Bearer con `ROLE_USER`; devuelve la cuenta propia. |
+| GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
-`.java-env/` está excluida de Git y contiene una copia del JDK, la distribución
-Maven descargada por el Wrapper y el repositorio de dependencias. Las nuevas
-descargas quedan ahí. `mvnw-local` configura Java y las cachés solo para ese
-comando: no necesita activación ni modifica SDKMAN o el Java global. El entorno
-ocupa disco local y se puede borrar para reconstruirlo; no contiene los datos
-de PostgreSQL. Después de clonar en otra máquina hay que prepararlo de nuevo.
-El Wrapper oficial `./mvnw` sigue disponible para CI y otros entornos.
+## Integración con catálogo
 
-Para ejecutar el servicio desde Java:
+Reservas emite el JWT del usuario con las audiencias `JWT_AUDIENCE` y
+`JWT_CATALOG_AUDIENCE` (por defecto, `turnos-reservas` y `turnos-catalogo`).
+Reenvía exactamente ese token desde la autenticación validada por Spring;
+Catálogo valida con la misma clave pública, emisor, audiencia propia y `ROLE_USER`.
+Los tokens anteriores solo para Reservas requieren un nuevo login para consultar
+Catálogo. El JWT técnico de cátedra es independiente: nunca se usa en estas
+consultas ni se entrega a Android. Su integración corresponde a RES-06.
 
-```bash
-docker compose up -d reservas-db
-export DB_URL=jdbc:postgresql://localhost:5433/reservas
-export DB_USER=reservas
-read -rs -p 'Clave de PostgreSQL: ' DB_PASSWORD
-export DB_PASSWORD
-./mvnw-local spring-boot:run
-```
+Configurar `CATALOGO_BASE_URL` con una URL alcanzable desde Reservas. Con ambos
+procesos en el host puede ser `http://localhost:8082`; entre contenedores se
+necesita conectividad de red y el nombre/puerto del servicio, no localhost.
+Los timeouts configurables son 3s de conexión y 5s de lectura por defecto.
+No se siguen redirecciones ni se reintentan automáticamente las consultas.
 
-La ejecución Java usa el puerto 8080 por defecto; `SERVER_PORT` permite
-cambiarlo. Spring no lee `.env` automáticamente. `DB_URL`, `DB_USER` y
-`DB_PASSWORD` son obligatorias; no se incluyen credenciales de cátedra.
+Los puertos internos permiten consultar profesional y agenda mediante
+`GET /api/professionals/{id}` y `GET /api/professionals/{id}/schedule` de Catálogo.
+No se agrega un proxy HTTP público ni se comparte código, base o tablas.
+La agenda conserva la versión aplicada por Catálogo: su inicialización y
+sincronización corresponden a CAT-05/CAT-06, y aún no representa turnos libres.
+Los errores externos bloquean la consulta dependiente sin inventar datos; login
+y cuenta propia siguen disponibles. Los logs de fallo incluyen operación,
+profesional, usuario autenticado y código, sin tokens ni cuerpos completos.
 
 ## Verificar
 
 Con JDK 25 y Docker activos:
 
 ```bash
-./mvnw-local verify
+./mvnw verify
 ```
 
-La prueba inicia PostgreSQL con Testcontainers, verifica el servicio HTTP,
-el cierre de endpoints de negocio y el comportamiento de readiness/liveness
-ante una caída real de la base. No omite la prueba si Docker está ausente.
+Las pruebas usan PostgreSQL real con Testcontainers y generan claves temporales.
+La integración HTTP se prueba con respuestas simuladas y servidores locales,
+incluyendo propagación del JWT, errores, timeout, redirecciones y operación local
+cuando Catálogo no está disponible. No requieren credenciales ni VPN de cátedra.
+Para el entorno Java aislado opcional: `./scripts/setup-java-env.sh /ruta/al/jdk-25`
+y después `./mvnw-local verify`.
 
-Ver [arquitectura](docs/arquitectura.md) y
-[contratos base](docs/contratos-base.md). No se requiere acceso a ZeroTier
-para estas pruebas locales.
-
-## Trabajo
-- `dev`: integración cotidiana.
-- `test`: validación de entregas.
-- `main`: versión estable.
-
-Crear ramas `feature/<numero>-<descripcion>` desde `dev` y abrir PR hacia `dev`. Promover conjuntos verificados a `test` y luego a `main`. Cerrar la issue al integrar en `dev` y cumplir sus criterios; las palabras automáticas de cierre pueden no ejecutarse hasta llegar a la rama predeterminada.
-
-Ver [backlog](BACKLOG.md) y [guía de contribución](CONTRIBUTING.md).
-
-## Restricciones
-Exactamente dos backends Java/Spring Boot y una app KMP Android. Bases servidor con propiedad y migraciones separadas. El anexo técnico oficial define contratos externos. Sin datos médicos reales.
-
-## Conventional Commits
-Usar `<tipo>(<alcance>): <descripción concreta en español>`.
-Tipos: `feat`, `fix`, `docs`, `test`, `refactor`, `build`, `ci`, `chore`.
-Ejemplos:
-- `feat(catalogo): aplicar cambios incrementales por identificador de profesional`
-- `fix(reservas): impedir la cancelación de turnos de otro usuario`
-- `test(sync): cubrir recuperación tras perder la ventana incremental`
-Evitar mensajes como `cambios`, `arreglos` o `update`. Agregar en el cuerpo motivos,
-decisiones y referencia a la issue cuando ayuden. Usar también títulos de PR
-descriptivos con este formato, especialmente al integrar mediante squash.
-
-## Integración de cátedra
-Se consumen los contratos que entreguen los profesores. La consigna menciona
-REST (API académica), Redis (catálogo e historial) y Kafka (eventos).
-No se asume que sean tres APIs HTTP independientes ni se inventa una integración adicional.
-El anexo de integración recibido define endpoints, topics, claves y payloads;
-su resumen está en `docs/contratos-base.md`. La conexión real se incorporará
-en RES-06 con configuración privada.
-
-## Licencia
-GNU General Public License v3.0. Ver [LICENSE](LICENSE).
-
-## Integración a main
-Los cambios a `main` deben entrar mediante pull request; no se permiten pushes directos.
+Trabajo por issue en ramas con PR a `dev`; promoción por PR a `test` y `main`.
+Licencia [GPL-3.0](LICENSE).

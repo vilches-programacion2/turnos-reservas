@@ -23,7 +23,7 @@ public class JwtEmisorTokenAdapter implements EmisorToken {
     public String emitir(Usuario usuario) {
         Instant ahora = Instant.now();
         var claims = JwtClaimsSet.builder()
-                .issuer(properties.issuer()).audience(List.of(properties.audience()))
+                .issuer(properties.issuer()).audience(List.of(properties.audience(), properties.catalogAudience()))
                 .subject(usuario.getId().toString())
                 .issuedAt(ahora).expiresAt(ahora.plus(properties.timeToLive()))
                 .claim("roles", List.copyOf(usuario.getAuthorities())).build();

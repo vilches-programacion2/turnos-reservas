@@ -33,6 +33,22 @@ import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+import reservas.catalogo.application.exception.ConsultaCatalogoException;
+import reservas.catalogo.application.exception.ConsultaCatalogoException.Error;
+import reservas.catalogo.application.service.CatalogoService;
+import reservas.catalogo.infrastructure.client.adapter.CatalogoHttpAdapter;
+import reservas.catalogo.infrastructure.client.mapper.CatalogoMapper;
+import reservas.catalogo.infrastructure.config.CatalogoProperties;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
@@ -44,9 +60,15 @@ import reservas.usuario.infrastructure.security.config.JwtProperties;
 import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 @Testcontainers
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"app.catalogo.base-url=http://127.0.0.1:1",
+                "app.catalogo.connect-timeout=100ms", "app.catalogo.read-timeout=100ms"})
 class AutenticacionIntegrationTest {
     @Container
     static final PostgreSQLContainer DATABASE = new PostgreSQLContainer("postgres:17");
@@ -64,6 +86,8 @@ class AutenticacionIntegrationTest {
     @Autowired private JwtEncoder encoder;
     @Autowired private JwtDecoder decoder;
     @Autowired private JwtProperties properties;
+    @Autowired private CatalogoService catalogo;
+    @Autowired private RSAPublicKey publicKey;
 
     private static final String PASSWORD = " Clave de prueba con espacios ";
     private final JsonMapper json = JsonMapper.builder().build();
@@ -80,7 +104,7 @@ class AutenticacionIntegrationTest {
         assertThat(claims.getHeaders().get("alg")).isEqualTo("RS256");
         assertThat(claims.getSubject()).isEqualTo(usuario.getId().toString());
         assertThat(claims.getIssuer().toString()).isEqualTo(properties.issuer());
-        assertThat(claims.getAudience()).containsExactly(properties.audience());
+        assertThat(claims.getAudience()).containsExactly(properties.audience(), properties.catalogAudience());
         assertThat(claims.getClaimAsStringList("roles")).containsExactly("ROLE_USER");
         assertThat(Duration.between(claims.getIssuedAt(), claims.getExpiresAt())).isEqualTo(Duration.ofMinutes(30));
         assertThat(claims.getClaims()).doesNotContainKeys("password", "passwordHash", "email");
@@ -91,6 +115,72 @@ class AutenticacionIntegrationTest {
         assertThat(cuenta.statusCode()).isEqualTo(200);
         assertThat(json.readTree(cuenta.body()).get("id").asLong()).isEqualTo(usuario.getId());
         assertThat(cuenta.body()).doesNotContain("password", usuario.getPasswordHash());
+    }
+
+    @Test
+    void jwtDeLoginEsValidoParaCatalogoYSePropagaSinCambiarIdentidadNiToken() throws Exception {
+        String token = login(registrar());
+        var catalogDecoder = NimbusJwtDecoder.withPublicKey(publicKey).build();
+        catalogDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(properties.issuer()), jwt ->
+                jwt.getAudience().contains(properties.catalogAudience())
+                        ? OAuth2TokenValidatorResult.success()
+                        : OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token"))));
+        assertThat(catalogDecoder.decode(token).getSubject()).isEqualTo(decoder.decode(token).getSubject());
+
+        var builder = RestClient.builder().baseUrl("https://catalogo.test");
+        var server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://catalogo.test/api/professionals/42/schedule"))
+                .andExpect(header("Authorization", "Bearer " + token))
+                .andRespond(withSuccess(CatalogoClientTest.AGENDA, org.springframework.http.MediaType.APPLICATION_JSON));
+        var config = new CatalogoProperties(URI.create("https://catalogo.test"), properties.catalogAudience(),
+                Duration.ofSeconds(3), Duration.ofSeconds(5));
+        var client = new CatalogoHttpAdapter(builder.build(), config, new CatalogoMapper());
+        try {
+            autenticarContexto(token);
+            assertThat(client.consultarAgenda(42L).getVersionAplicada()).isEqualTo(7L);
+            server.verify();
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void caidaDeCatalogoBloqueaLaConsultaPeroPermiteLoginYCuentaPropia() throws Exception {
+        String token = login(registrar());
+        try {
+            autenticarContexto(token);
+            assertThatThrownBy(() -> catalogo.consultarAgenda(42L))
+                    .isInstanceOfSatisfying(ConsultaCatalogoException.class,
+                            e -> assertThat(e.getError()).isEqualTo(Error.NO_DISPONIBLE));
+            assertThat(cuenta("/api/account", token).statusCode()).isEqualTo(200);
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void tokenAnteriorSoloParaReservasSigueSirviendoLocalmentePeroNoSePropagaACatalogo() throws Exception {
+        var usuario = registrar();
+        String token = encoder.encode(JwtEncoderParameters.from(JwsHeader.with(SignatureAlgorithm.RS256).build(),
+                JwtClaimsSet.builder().issuer(properties.issuer()).audience(List.of(properties.audience()))
+                        .subject(usuario.getId().toString()).issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300))
+                        .claim("roles", List.of("ROLE_USER")).build())).getTokenValue();
+        assertThat(cuenta("/api/account", token).statusCode()).isEqualTo(200);
+        try {
+            autenticarContexto(token);
+            assertThatThrownBy(() -> catalogo.consultarAgenda(42L))
+                    .isInstanceOfSatisfying(ConsultaCatalogoException.class,
+                            e -> assertThat(e.getError()).isEqualTo(Error.AUTENTICACION_REQUERIDA));
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    private void autenticarContexto(String token) {
+        var jwt = decoder.decode(token);
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt,
+                jwt.getClaimAsStringList("roles").stream().map(SimpleGrantedAuthority::new).toList()));
     }
 
     @Test

@@ -12,6 +12,7 @@ import org.springframework.validation.annotation.Validated;
 public record JwtProperties(
         @NotBlank String issuer,
         @NotBlank String audience,
+        @NotBlank String catalogAudience,
         Duration timeToLive,
         @NotNull Resource privateKey,
         @NotNull Resource publicKey) {
