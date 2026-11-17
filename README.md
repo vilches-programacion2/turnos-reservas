@@ -32,6 +32,57 @@ El volumen conserva los datos de PostgreSQL. Variables de configuración en
 variables de entorno y usar rutas `file:` absolutas del host para las claves;
 Spring no carga `.env` automáticamente.
 
+## Ejecutar ambos backends — RES-13
+
+Clonar los dos repositorios como carpetas hermanas, usando las ramas que se
+quieran probar juntas (normalmente `dev`):
+
+```bash
+git clone -b dev git@github.com:vilches-programacion2/turnos-reservas.git
+git clone -b dev git@github.com:vilches-programacion2/turnos-catalogo.git
+cd turnos-reservas
+cp .env.integracion.example .env.integracion
+```
+
+El archivo [compose.integracion.yaml](compose.integracion.yaml) vive en Reservas
+y construye cada backend con su propio Dockerfile. `CATALOGO_CONTEXT` permite
+cambiar la ubicación del clon de Catálogo. No modifica ese repositorio.
+
+Generar el par RSA del apartado anterior si todavía no existe; conservarlo entre
+ejecuciones. Editar `.env.integracion` con contraseñas distintas para ambas bases,
+`APP_UID`/`APP_GID` del dueño de los secretos (`id -u` / `id -g`, sin root), URL de
+cátedra y ruta al archivo externo de su JWT técnico. Usar permisos restrictivos
+(`chmod 600`) para `.env.integracion`, privada y JWT técnico. Catálogo recibe solo
+la pública de usuario y el JWT técnico; la privada se monta únicamente en Reservas.
+Los montajes son de solo lectura. No copiar secretos a los ejemplos ni a Git.
+
+Con Docker activo y la VPN conectada para acceder a cátedra:
+
+```bash
+docker compose --env-file .env.integracion -f compose.integracion.yaml up --build -d
+docker compose --env-file .env.integracion -f compose.integracion.yaml --profile verificacion run --rm --build verificacion
+```
+
+La verificación espera readiness, crea un usuario ficticio, hace login, consulta
+su cuenta y usa las clases reales del cliente de Reservas contra Catálogo dentro
+de la red Docker. No requiere la privada ni el JWT técnico en su contenedor.
+Sin snapshot, espera `CATALOG_NOT_READY`; eso comprueba conexión y autenticación,
+no una sincronización completada. CAT-05 incorporará los datos iniciales.
+El usuario ficticio permanece en la base local de demostración.
+
+Por defecto se publican solo en localhost: Reservas `8081`, Catálogo `8082` y sus
+bases `5433`/`5434`. Las aplicaciones comparten una red; cada base tiene otra red
+separada, usuario, migraciones y volumen propios. Reservas usa `http://catalogo:8080`
+como URL interna. La infraestructura central de cátedra sigue siendo externa;
+su JWT compartido se incorporará al consumidor de Reservas en RES-06.
+
+```bash
+docker compose --env-file .env.integracion -f compose.integracion.yaml down
+```
+
+Detener así conserva los volúmenes. No usar `down -v` para conservar los datos.
+Los Compose individuales siguen disponibles para trabajar con un solo backend.
+
 ## API disponible
 
 | Método | Ruta | Acceso |
