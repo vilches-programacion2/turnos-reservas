@@ -40,6 +40,7 @@ public class CatalogoMapper {
     private HorarioSemanal toDomain(HorarioSemanalResponse response) {
         if (response == null || !positivo(response.getId()) || response.getDayOfWeek() == null
                 || response.getStartTime() == null || response.getEndTime() == null
+                || !response.getEndTime().isAfter(response.getStartTime())
                 || response.getSlotDurationMinutes() == null || response.getSlotDurationMinutes() <= 0) {
             throw new ConsultaCatalogoException(Error.RESPUESTA_INVALIDA);
         }

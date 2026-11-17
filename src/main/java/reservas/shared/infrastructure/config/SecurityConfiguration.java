@@ -30,7 +30,7 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/register", "/api/authenticate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health",
                                 "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/account").hasRole("USER")
+                        .requestMatchers(HttpMethod.GET, "/api/account", "/api/professionals/{id}/availability").hasRole("USER")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(authentication)))
                 .build();
