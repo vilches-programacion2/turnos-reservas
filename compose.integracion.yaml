@@ -53,6 +53,16 @@ services:
       CATALOGO_BASE_URL: http://catalogo:8080
       CATALOGO_CONNECT_TIMEOUT: ${CATALOGO_CONNECT_TIMEOUT:-3s}
       CATALOGO_READ_TIMEOUT: ${CATALOGO_READ_TIMEOUT:-5s}
+      CATEDRA_ENABLED: ${CATEDRA_ENABLED:-true}
+      CATEDRA_BASE_URL: ${CATEDRA_BASE_URL:?Definir CATEDRA_BASE_URL}
+      CATEDRA_TOKEN_FILE: /run/secrets/catedra.jwt
+      CATEDRA_CONNECT_TIMEOUT: ${CATEDRA_CONNECT_TIMEOUT:-3s}
+      CATEDRA_READ_TIMEOUT: ${CATEDRA_READ_TIMEOUT:-5s}
+      CATEDRA_KAFKA_SECURITY_PROTOCOL: ${CATEDRA_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      CATEDRA_KAFKA_REQUEST_TIMEOUT: ${CATEDRA_KAFKA_REQUEST_TIMEOUT:-5s}
+      CATEDRA_KAFKA_OPERATION_TIMEOUT: ${CATEDRA_KAFKA_OPERATION_TIMEOUT:-10s}
+      CATEDRA_KAFKA_RETRY_BACKOFF: ${CATEDRA_KAFKA_RETRY_BACKOFF:-250ms}
+      CATEDRA_KAFKA_RETRIES: ${CATEDRA_KAFKA_RETRIES:-2}
     volumes:
       - type: bind
         source: ${JWT_PRIVATE_KEY_SOURCE:-./secrets/private.pem}
@@ -63,6 +73,12 @@ services:
       - type: bind
         source: ${JWT_PUBLIC_KEY_SOURCE:-./secrets/public.pem}
         target: /run/secrets/public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATEDRA_TOKEN_SOURCE:?Definir CATEDRA_TOKEN_SOURCE}
+        target: /run/secrets/catedra.jwt
         read_only: true
         bind:
           create_host_path: false

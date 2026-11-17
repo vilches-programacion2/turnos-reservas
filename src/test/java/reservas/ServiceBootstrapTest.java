@@ -7,6 +7,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -36,6 +38,9 @@ class ServiceBootstrapTest {
     @LocalServerPort
     int port;
 
+    @Autowired
+    ApplicationContext context;
+
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();
 
@@ -47,6 +52,9 @@ class ServiceBootstrapTest {
         assertThat(get("/api/users").statusCode()).isEqualTo(401);
         assertThat(get("/actuator/env").statusCode()).isEqualTo(401);
         assertThat(get("/v3/api-docs").statusCode()).isEqualTo(401);
+        assertThat(context.getBeansOfType(org.springframework.kafka.core.KafkaTemplate.class)).isEmpty();
+        assertThat(context.getBeansOfType(org.springframework.kafka.core.KafkaAdmin.class)).isEmpty();
+        assertThat(context.getBeansOfType(org.springframework.kafka.listener.MessageListenerContainer.class)).isEmpty();
 
         DATABASE.stop();
         assertHealth("/actuator/health/readiness", 503, "DOWN");

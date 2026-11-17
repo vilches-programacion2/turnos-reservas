@@ -67,14 +67,15 @@ La verificación espera readiness, crea un usuario ficticio, hace login, consult
 su cuenta y usa las clases reales del cliente de Reservas contra Catálogo dentro
 de la red Docker. No requiere la privada ni el JWT técnico en su contenedor.
 Sin snapshot, espera `CATALOG_NOT_READY`; eso comprueba conexión y autenticación,
-no una sincronización completada. CAT-05 incorporará los datos iniciales.
+no una sincronización completada. Con CAT-05, Catálogo inicializa su réplica
+mediante el snapshot de cátedra.
 El usuario ficticio permanece en la base local de demostración.
 
 Por defecto se publican solo en localhost: Reservas `8081`, Catálogo `8082` y sus
 bases `5433`/`5434`. Las aplicaciones comparten una red; cada base tiene otra red
 separada, usuario, migraciones y volumen propios. Reservas usa `http://catalogo:8080`
 como URL interna. La infraestructura central de cátedra sigue siendo externa;
-su JWT compartido se incorporará al consumidor de Reservas en RES-06.
+ambos backends montan el mismo archivo externo de JWT técnico.
 
 ```bash
 docker compose --env-file .env.integracion -f compose.integracion.yaml down
@@ -100,7 +101,7 @@ Reenvía exactamente ese token desde la autenticación validada por Spring;
 Catálogo valida con la misma clave pública, emisor, audiencia propia y `ROLE_USER`.
 Los tokens anteriores solo para Reservas requieren un nuevo login para consultar
 Catálogo. El JWT técnico de cátedra es independiente: nunca se usa en estas
-consultas ni se entrega a Android. Su integración corresponde a RES-06.
+consultas ni se entrega a Android.
 
 Configurar `CATALOGO_BASE_URL` con una URL alcanzable desde Reservas. Con ambos
 procesos en el host puede ser `http://localhost:8082`; entre contenedores se
@@ -116,6 +117,29 @@ sincronización corresponden a CAT-05/CAT-06, y aún no representa turnos libres
 Los errores externos bloquean la consulta dependiente sin inventar datos; login
 y cuenta propia siguen disponibles. Los logs de fallo incluyen operación,
 profesional, usuario autenticado y código, sin tokens ni cuerpos completos.
+
+## Integración con cátedra — RES-06
+
+Al habilitar `CATEDRA_ENABLED`, Reservas consulta al arrancar
+`GET /api/student/integration` con el JWT leído de `CATEDRA_TOKEN_FILE`.
+Configurar la URL, el archivo externo y los timeouts según [.env.example](.env.example).
+El Compose integral ya monta ese archivo de solo lectura en ambos backends.
+El Compose individual conserva esta integración deshabilitada por defecto.
+
+Solo el estado `PROVISIONED` prepara los clientes Spring Kafka con los brokers,
+topics y consumer group asignados por cátedra. Se comprueban los metadatos de
+los topics de acciones y teléfono; todavía no se publican ni consumen eventos,
+no se crean topics ni se confirman offsets. Esta comprobación no acredita
+permisos de publicación o consumo. Los mensajes usarán claves y valores String
+para interpretar el JSON explícitamente en el flujo posterior.
+
+REST usa por defecto 3s de conexión y 5s de lectura, sin redirecciones ni
+reintentos automáticos. Kafka limita sus solicitudes a 5s, la operación a 10s
+y los reintentos a dos, con pausa de 250ms. El protocolo de seguridad es
+configurable; no se reutiliza la contraseña de Redis como credencial Kafka.
+Un fallo de integración se informa con un código sin secretos y permite seguir
+usando registro, login y cuenta. Tras recuperar la conectividad, reiniciar
+Reservas para repetir la preparación.
 
 ## Verificar
 
