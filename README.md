@@ -91,6 +91,7 @@ Los Compose individuales siguen disponibles para trabajar con un solo backend.
 | POST | `/api/register` | Público, registro de usuario. |
 | POST | `/api/authenticate` | Público, `username` y `password`; devuelve `id_token`. |
 | GET | `/api/account` | JWT Bearer con `ROLE_USER`; devuelve la cuenta propia. |
+| GET | `/api/professionals/{id}/availability?date=YYYY-MM-DD` | JWT de usuario; turnos libres para un profesional y una fecha. |
 | GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
 ## Integración con catálogo
@@ -140,6 +141,30 @@ configurable; no se reutiliza la contraseña de Redis como credencial Kafka.
 Un fallo de integración se informa con un código sin secretos y permite seguir
 usando registro, login y cuenta. Tras recuperar la conectividad, reiniciar
 Reservas para repetir la preparación.
+
+## Disponibilidad — RES-07
+
+`GET /api/professionals/{id}/availability?date=YYYY-MM-DD` combina la agenda
+semanal de Catálogo con `GET /api/appointment-occupancies` de cátedra para esa
+fecha (`from=to=date`). Reenvía a Catálogo el JWT de usuario validado y utiliza
+únicamente el archivo técnico externo para consultar ocupaciones.
+
+Respuesta: `{professionalId, date, versionAplicada, availableSlots}`, con horas
+de inicio ordenadas y sin duplicados. Solo incluye turnos completos alineados
+desde el inicio de una franja del día correspondiente. Excluye reservas
+`CONFIRMED` y holds `HELD` informados por cátedra, sin liberar holds por cuenta
+propia según su vencimiento. Sin agenda para ese día devuelve lista vacía.
+
+Rechaza IDs o fechas inválidas y fechas pasadas antes de consultar dependencias.
+Usa `America/Argentina/Buenos_Aires`; para hoy también excluye horas transcurridas.
+Conserva los errores de profesional inexistente/deshabilitado y catálogo sin
+inicializar. Una dependencia inaccesible devuelve `503`; una respuesta externa
+inválida devuelve `502`, sin inventar disponibilidad. Un rechazo del JWT técnico
+no se presenta como un error de login del usuario.
+
+La respuesta usa `Cache-Control: no-store`. La disponibilidad puede cambiar
+antes de reservar: crear el bloqueo central corresponde a RES-08. No se crean
+holds, reservas, tablas ni consumidores Kafka al consultar disponibilidad.
 
 ## Verificar
 
