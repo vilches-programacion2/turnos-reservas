@@ -92,6 +92,8 @@ Los Compose individuales siguen disponibles para trabajar con un solo backend.
 | POST | `/api/authenticate` | Público, `username` y `password`; devuelve `id_token`. |
 | GET | `/api/account` | JWT Bearer con `ROLE_USER`; devuelve la cuenta propia. |
 | GET | `/api/professionals/{id}/availability?date=YYYY-MM-DD` | JWT de usuario; turnos libres para un profesional y una fecha. |
+| POST | `/api/appointment-holds` | JWT de usuario; bloquea temporalmente el turno elegido. |
+| POST | `/api/appointment-holds/{id}/confirm` | JWT del dueño; inicia la confirmación del bloqueo. |
 | GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
 ## Integración con catálogo
@@ -163,8 +165,25 @@ inválida devuelve `502`, sin inventar disponibilidad. Un rechazo del JWT técni
 no se presenta como un error de login del usuario.
 
 La respuesta usa `Cache-Control: no-store`. La disponibilidad puede cambiar
-antes de reservar: crear el bloqueo central corresponde a RES-08. No se crean
-holds, reservas, tablas ni consumidores Kafka al consultar disponibilidad.
+entre la consulta y el bloqueo del turno.
+
+## Bloqueo temporal y confirmación inicial — RES-08
+
+`POST /api/appointment-holds` recibe `{"professionalId":207,"date":"YYYY-MM-DD",
+"startTime":"09:30"}`. Usá una fecha futura y una hora devuelta por
+disponibilidad. Reservas deriva la identidad del paciente del JWT, pide el
+bloqueo a cátedra y devuelve `201` con `id` local, `status: HELD` y `expiresAt`.
+
+Para empezar la confirmación, enviá `POST /api/appointment-holds/{id}/confirm`
+con ese ID local y el mismo JWT. Reservas verifica el propietario, el
+vencimiento y los nombres del perfil. Un `202` con `WAITING_FOR_PHONE` indica
+que cátedra aceptó iniciar el proceso. El intercambio de teléfono corresponde
+a RES-09.
+
+Si el turno se ocupó en el intervalo, la creación devuelve `409 SLOT_UNAVAILABLE`.
+Un bloqueo vencido devuelve `410 HOLD_EXPIRED`. Ante un resultado indeterminado
+(`503 HOLD_OUTCOME_UNKNOWN`), Reservas conserva el estado de la operación para
+revisarla antes de volver a intentarla.
 
 ## Verificar
 
