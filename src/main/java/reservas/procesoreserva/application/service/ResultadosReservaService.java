@@ -71,7 +71,7 @@ public class ResultadosReservaService {
         boolean esperando = ESPERANDO_RESULTADO.contains(estado);
         return switch (accion.eventType()) {
             case "AppointmentConfirmed" -> esperando && confirmar(proceso, accion);
-            case "AppointmentCancelled" -> (esperando || "CONFIRMED".equals(estado)) && cancelar(proceso, accion);
+            case "AppointmentCancelled" -> (esperando || puedeRecibirCancelacion(estado)) && cancelar(proceso, accion);
             case "AdditionalInformationRejected" -> esperando && rechazarTelefono(proceso, accion);
             case "AppointmentProcessExpired" -> (esperando || "HELD".equals(estado)) && cerrar(proceso, accion, "EXPIRED");
             case "AppointmentProcessInvalid" -> esperando && cerrar(proceso, accion, "INVALID");
@@ -91,12 +91,15 @@ public class ResultadosReservaService {
     private boolean cancelar(ProcesoReserva proceso, AccionReserva accion) {
         if (!reservaCoincide(proceso, accion, "CANCELLED")) return false;
 
-        proceso.setReservationId(numero(accion, "reservationId"));
-        proceso.setStatus("CANCELLED");
-        proceso.setCancelledAt(accion.occurredAt());
-        String motivo = texto(accion, "reason");
-        if (motivo != null && motivo.length() <= 500) proceso.setCancellationReason(motivo);
+        proceso.registrarCancelacion(numero(accion, "reservationId"), accion.occurredAt(), texto(accion, "reason"));
         return true;
+    }
+
+    private boolean puedeRecibirCancelacion(String estado) {
+        return switch (estado) {
+            case "CONFIRMED", "CANCELLING", "CANCEL_UNKNOWN" -> true;
+            default -> false;
+        };
     }
 
     private boolean rechazarTelefono(ProcesoReserva proceso, AccionReserva accion) {

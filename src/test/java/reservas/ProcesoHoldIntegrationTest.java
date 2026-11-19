@@ -11,6 +11,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import reservas.integracion.infrastructure.kafka.KafkaCatedraAdapter;
 import reservas.procesoreserva.application.exception.HoldCatedraException;
+import reservas.procesoreserva.application.exception.ReservaPropiaException;
 import reservas.procesoreserva.application.service.ResultadosReservaService;
 import reservas.procesoreserva.domain.model.AccionReserva;
 import reservas.procesoreserva.domain.ports.out.AccionesReservaRepository;
@@ -40,6 +42,9 @@ import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient.Hold;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient.Confirmacion;
 import reservas.procesoreserva.domain.ports.out.ProcesoReservaRepository;
+import reservas.procesoreserva.domain.ports.out.ReservasCatedraClient;
+import reservas.procesoreserva.domain.ports.out.ReservasCatedraClient.Cancelacion;
+import reservas.procesoreserva.domain.ports.out.ReservasCatedraClient.Reserva;
 import reservas.procesoreserva.domain.ports.out.PublicarTelefonoPort.EnvioTelefono;
 import reservas.procesoreserva.domain.ports.out.PublicarTelefonoPort.Resultado;
 import reservas.procesoreserva.infrastructure.kafka.AccionesReservaListener;
@@ -63,6 +68,7 @@ class ProcesoHoldIntegrationTest {
     @LocalServerPort private int port;
     @MockitoBean private HoldsCatedraClient catedra;
     @MockitoBean private KafkaCatedraAdapter kafka;
+    @MockitoBean private ReservasCatedraClient reservasCatedra;
     @Autowired private ProcesoReservaRepository procesos;
     @Autowired private UsuarioRepository usuarios;
     @Autowired private JdbcTemplate jdbc;
@@ -76,6 +82,118 @@ class ProcesoHoldIntegrationTest {
         registry.add("spring.datasource.url", DATABASE::getJdbcUrl);
         registry.add("spring.datasource.username", DATABASE::getUsername);
         registry.add("spring.datasource.password", DATABASE::getPassword);
+    }
+
+    @Test
+    void listaSoloReservasConPropietarioLocalYRechazaUnaPaginaInconsistente() throws Exception {
+        var dueño = usuario();
+        var otro = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        var holdAjeno = prepararHold(otro, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        long idAjeno = json.readTree(post(PATH, otro.token(), slot()).body()).get("id").asLong();
+        confirmarEnBase(dueño, id);
+        confirmarEnBase(otro, idAjeno);
+        var propia = reservaCentral(dueño.externalId(), hold, id);
+        var ajenaConPacienteIncorrecto = reservaCentral(dueño.externalId(), holdAjeno, idAjeno);
+        var endpoint = "/api/appointments?page=1&size=10";
+        when(reservasCatedra.listar(dueño.externalId(), 1, 10)).thenReturn(List.of(propia),
+                List.of(propia, ajenaConPacienteIncorrecto));
+
+        var respuesta = obtener(endpoint, dueño.token());
+        assertThat(respuesta.statusCode()).isEqualTo(200);
+        var pagina = json.readTree(respuesta.body());
+        assertThat(pagina.path("page").intValue()).isEqualTo(1);
+        assertThat(pagina.path("items").size()).isEqualTo(1);
+        assertThat(pagina.path("items").get(0).path("id").longValue()).isEqualTo(id);
+        assertThat(respuesta.body()).doesNotContain(dueño.externalId(), hold.reservationProcessId(), "patientPhone");
+
+        var invalida = obtener(endpoint, dueño.token());
+        assertThat(invalida.statusCode()).isEqualTo(502);
+        assertThat(invalida.body()).contains("APPOINTMENT_INTEGRATION_INCONSISTENT")
+                .doesNotContain(hold.reservationProcessId(), holdAjeno.reservationProcessId(), "\"items\"");
+        assertThat(obtener("/api/appointments?size=0", dueño.token()).statusCode()).isEqualTo(400);
+        verify(reservasCatedra, times(2)).listar(dueño.externalId(), 1, 10);
+        verifyNoMoreInteractions(reservasCatedra);
+    }
+
+    @Test
+    void cancelaSoloUnaConfirmadaPropiaYSerializaSolicitudesSimultaneas() throws Exception {
+        var dueño = usuario();
+        var otro = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        String endpoint = "/api/appointments/" + id + "/cancel";
+        assertThat(post(endpoint, otro.token(), null).statusCode()).isEqualTo(404);
+        assertThat(post(endpoint, null, null).statusCode()).isEqualTo(401);
+        assertThat(post(endpoint, dueño.token(), null).statusCode()).isEqualTo(409);
+        verifyNoInteractions(reservasCatedra);
+        confirmarEnBase(dueño, id);
+
+        var llego = new CountDownLatch(1);
+        var continuar = new CountDownLatch(1);
+        when(reservasCatedra.cancelar(hold.reservationProcessId(), "prueba")).thenAnswer(inv -> {
+            llego.countDown();
+            assertThat(continuar.await(8, TimeUnit.SECONDS)).isTrue();
+            return new Cancelacion(id + 100, hold.reservationProcessId(), Instant.parse("2026-11-19T14:00:00.123456789Z"));
+        });
+        var primera = http.sendAsync(request(endpoint, dueño.token(), Map.of("reason", "prueba")),
+                HttpResponse.BodyHandlers.ofString());
+        try {
+            assertThat(llego.await(8, TimeUnit.SECONDS)).isTrue();
+            assertThat(estadoLocal(dueño)).isEqualTo("CANCELLING");
+            var segunda = post(endpoint, dueño.token(), null);
+            assertThat(segunda.statusCode()).isEqualTo(409);
+            assertThat(segunda.body()).contains("CANCELLATION_IN_PROGRESS");
+        } finally {
+            continuar.countDown();
+        }
+        var cancelada = primera.get(8, TimeUnit.SECONDS);
+        assertThat(cancelada.statusCode()).isEqualTo(200);
+        assertThat(cancelada.body()).contains("CANCELLED").doesNotContain(hold.reservationProcessId(), "prueba");
+        var repetida = post(endpoint, dueño.token(), null);
+        assertThat(repetida.statusCode()).isEqualTo(200);
+        assertThat(repetida.body()).isEqualTo(cancelada.body());
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCELLED");
+        verify(reservasCatedra).cancelar(hold.reservationProcessId(), "prueba");
+        verifyNoMoreInteractions(reservasCatedra);
+    }
+
+    @Test
+    void unaCancelacionInciertaNoSeRepiteYConvergeConKafka() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        confirmarEnBase(dueño, id);
+        String endpoint = "/api/appointments/" + id + "/cancel";
+        when(reservasCatedra.cancelar(hold.reservationProcessId(), null))
+                .thenThrow(new ReservaPropiaException(ReservaPropiaException.Error.CANCELACION_INDETERMINADA));
+        for (int i = 0; i < 2; i++) {
+            var resultado = post(endpoint, dueño.token(), null);
+            assertThat(resultado.statusCode()).isEqualTo(503);
+            assertThat(resultado.body()).contains("CANCELLATION_OUTCOME_UNKNOWN");
+        }
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCEL_UNKNOWN");
+
+        recibir(hold, UUID.randomUUID().toString(), "AppointmentCancelled", 2,
+                datosResultado(UUID.randomUUID().toString(), "CANCELLED", id));
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCELLED");
+        assertThat(post(endpoint, dueño.token(), null).statusCode()).isEqualTo(200);
+        verify(reservasCatedra).cancelar(hold.reservationProcessId(), null);
+        verifyNoMoreInteractions(reservasCatedra);
+    }
+
+    private void confirmarEnBase(Cuenta dueño, long id) {
+        var proceso = procesos.findByIdAndUserId(id, dueño.id()).orElseThrow();
+        proceso.setStatus("CONFIRMED");
+        proceso.setReservationId(id + 100);
+        proceso.setConfirmedAt(Instant.now());
+        procesos.save(proceso);
+    }
+
+    private Reserva reservaCentral(String paciente, Hold hold, long id) {
+        return new Reserva(id + 100, hold.reservationProcessId(), paciente, 207L, "Nombre", "Apellido", FECHA,
+                HORA, HORA.plusMinutes(30), "CONFIRMED", Instant.now(), null);
     }
 
     @Test

@@ -5,6 +5,8 @@ import reservas.procesoreserva.domain.ports.out.ProcesoReservaRepository;
 import reservas.procesoreserva.infrastructure.persistence.repository.JpaProcesoReservaRepository;
 import reservas.procesoreserva.infrastructure.persistence.mapper.ProcesoReservaMapper;
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +32,11 @@ public class JpaProcesoReservaRepositoryAdapter implements ProcesoReservaReposit
     @Override
     public Optional<ProcesoReserva> findByReservationProcessId(String reservationProcessId) {
         return repository.findByReservationProcessId(reservationProcessId).map(mapper::toDomainModel);
+    }
+
+    @Override
+    public List<ProcesoReserva> findByUserIdAndReservationProcessIdIn(Long userId, Collection<String> ids) {
+        return repository.findByUserIdAndReservationProcessIdIn(userId, ids).stream().map(mapper::toDomainModel).toList();
     }
 
     @Override
