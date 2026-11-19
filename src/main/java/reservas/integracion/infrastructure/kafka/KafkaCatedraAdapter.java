@@ -21,19 +21,28 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.listener.AcknowledgingMessageListener;
+import org.springframework.kafka.listener.CommonContainerStoppingErrorHandler;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.KafkaMessageListenerContainer;
 import org.springframework.stereotype.Component;
 import reservas.integracion.application.exception.IntegracionCatedraException;
 import reservas.integracion.application.exception.IntegracionCatedraException.Error;
 import reservas.integracion.domain.model.EstadoProvisionamiento;
 import reservas.integracion.domain.model.IntegracionCatedra;
 import reservas.integracion.domain.ports.out.PrepararKafkaCatedraPort;
+import reservas.procesoreserva.domain.ports.out.PublicarTelefonoPort;
+import tools.jackson.databind.json.JsonMapper;
 
 @Component
 @RequiredArgsConstructor
 @EnableConfigurationProperties(CatedraKafkaProperties.class)
-public class KafkaCatedraAdapter implements PrepararKafkaCatedraPort {
+public class KafkaCatedraAdapter implements PrepararKafkaCatedraPort, PublicarTelefonoPort {
     private final CatedraKafkaProperties properties;
+    private final AcknowledgingMessageListener<String, String> acciones;
+    private final JsonMapper json;
     private volatile Conexion conexion;
 
     @Override
@@ -84,8 +93,63 @@ public class KafkaCatedraAdapter implements PrepararKafkaCatedraPort {
         consumer.put(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "classic");
         consumer.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         consumer.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        // Las factories no abren productor/consumidor ni se unen al grupo hasta que se usen en RES-09.
-        conexion = new Conexion(new DefaultKafkaProducerFactory<>(producer), new DefaultKafkaConsumerFactory<>(consumer));
+        var productores = new DefaultKafkaProducerFactory<String, String>(producer);
+        var consumidores = new DefaultKafkaConsumerFactory<String, String>(consumer);
+        var listener = crearConsumidor(consumidores, integracion.getKafkaAppointmentActionsTopic());
+        try {
+            listener.start();
+        } catch (RuntimeException e) {
+            listener.stop();
+            productores.destroy();
+            throw new IntegracionCatedraException(Error.KAFKA_NO_DISPONIBLE);
+        }
+        var template = new KafkaTemplate<String, String>(productores);
+        template.setProducerListener(null);
+        conexion = new Conexion(productores, consumidores, listener, template,
+                integracion.getGroupId(), integracion.getKafkaAppointmentPhoneTopic());
+    }
+
+    @Override
+    public Resultado publicar(EnvioTelefono envio) {
+        var actual = conexion;
+        if (actual == null) return Resultado.NO_INICIADO;
+        String mensaje = json.writeValueAsString(Map.of(
+                "eventType", "AdditionalInformationSubmitted",
+                "eventId", envio.eventId().toString(),
+                "groupId", actual.groupId(),
+                "reservationProcessId", envio.reservationProcessId(),
+                "holdId", envio.holdId(),
+                "requestEventId", envio.requestEventId(),
+                "information", Map.of("phoneNumber", envio.phoneNumber()),
+                "occurredAt", envio.occurredAt().toString(),
+                "schemaVersion", 1));
+        try {
+            actual.template().send(actual.telefonoTopic(), envio.reservationProcessId(), mensaje)
+                    .get(properties.operationTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            return Resultado.PUBLICADO;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Resultado.INDETERMINADO;
+        } catch (ExecutionException | TimeoutException | RuntimeException e) {
+            return Resultado.INDETERMINADO;
+        }
+    }
+
+    protected KafkaMessageListenerContainer<String, String> crearConsumidor(ConsumerFactory<String, String> factory, String topic) {
+        var props = new ContainerProperties(topic);
+        props.setMessageListener(acciones);
+        props.setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        props.setSyncCommits(true);
+        props.setSyncCommitTimeout(properties.operationTimeout());
+        var contenedor = new KafkaMessageListenerContainer<>(factory, props);
+        var errores = new CommonContainerStoppingErrorHandler() {
+            @Override
+            public boolean isAckAfterHandle() {
+                return false;
+            }
+        };
+        contenedor.setCommonErrorHandler(errores);
+        return contenedor;
     }
 
     public ProducerFactory<String, String> productores() {
@@ -108,11 +172,15 @@ public class KafkaCatedraAdapter implements PrepararKafkaCatedraPort {
     public synchronized void cerrar() {
         var anterior = conexion;
         conexion = null;
-        if (anterior != null) anterior.productores().destroy();
+        if (anterior != null) {
+            anterior.listener().stop();
+            anterior.productores().destroy();
+        }
     }
 
     private record Conexion(DefaultKafkaProducerFactory<String, String> productores,
-            DefaultKafkaConsumerFactory<String, String> consumidores) {
+            DefaultKafkaConsumerFactory<String, String> consumidores, KafkaMessageListenerContainer<String, String> listener,
+            KafkaTemplate<String, String> template, String groupId, String telefonoTopic) {
     }
 
     private record AdminAcotado(Admin admin) implements AutoCloseable {
