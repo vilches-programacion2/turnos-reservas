@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -36,6 +38,7 @@ import reservas.integracion.infrastructure.kafka.KafkaCatedraAdapter;
 import reservas.procesoreserva.application.exception.HoldCatedraException;
 import reservas.procesoreserva.application.exception.ReservaPropiaException;
 import reservas.procesoreserva.application.service.ResultadosReservaService;
+import reservas.procesoreserva.application.service.RecuperacionReservasService;
 import reservas.procesoreserva.domain.model.AccionReserva;
 import reservas.procesoreserva.domain.ports.out.AccionesReservaRepository;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient;
@@ -82,6 +85,116 @@ class ProcesoHoldIntegrationTest {
         registry.add("spring.datasource.url", DATABASE::getJdbcUrl);
         registry.add("spring.datasource.username", DATABASE::getUsername);
         registry.add("spring.datasource.password", DATABASE::getPassword);
+    }
+
+    @Test
+    void recuperaUnaConfirmacionPerdidaDeLaSegundaPaginaInclusoSiVencioElHold() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        marcarPendiente(id, "CONFIRMING");
+        var primeraPagina = IntStream.range(0, 20)
+                .mapToObj(i -> new Reserva(1000L + i, "otro-proceso-" + i, dueño.externalId(), 207L, null, null,
+                        FECHA, HORA, null, "CONFIRMED", Instant.now(), null))
+                .toList();
+        when(reservasCatedra.listarEnFecha(dueño.externalId(), FECHA, 0, 20)).thenReturn(primeraPagina);
+        when(reservasCatedra.listarEnFecha(dueño.externalId(), FECHA, 1, 20))
+                .thenReturn(List.of(reservaCentral(dueño.externalId(), hold, id)));
+
+        recuperar();
+        var proceso = procesos.findByIdAndUserId(id, dueño.id()).orElseThrow();
+        assertThat(proceso.getStatus()).isEqualTo("CONFIRMED");
+        assertThat(proceso.getReservationId()).isEqualTo(id + 100);
+        verify(reservasCatedra).listarEnFecha(dueño.externalId(), FECHA, 1, 20);
+        verify(reservasCatedra, never()).cancelar(anyString(), any());
+        verify(catedra, never()).confirmar(anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void unaConsultaSinResultadoConservaElEstadoInciertoHastaEncontrarCancelacion() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        confirmarEnBase(dueño, id);
+        marcarPendiente(id, "CANCELLING");
+        var confirmada = reservaCentral(dueño.externalId(), hold, id);
+        var cancelada = new Reserva(id + 100, hold.reservationProcessId(), dueño.externalId(), 207L, null, null,
+                FECHA, HORA, null, "CANCELLED", Instant.now().minusSeconds(20), Instant.now());
+        when(reservasCatedra.listarEnFecha(dueño.externalId(), FECHA, 0, 20)).thenReturn(
+                List.of(), List.of(confirmada), List.of(cancelada));
+
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCEL_UNKNOWN");
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCEL_UNKNOWN");
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCELLED");
+        verify(reservasCatedra, never()).cancelar(anyString(), any());
+    }
+
+    @Test
+    void venceUnHoldSinConfirmarYConservaUnaCreacionSinIdentificadores() throws Exception {
+        var dueño = usuario();
+        var otro = usuario();
+        prepararHold(dueño, Instant.now().plusSeconds(240));
+        prepararHold(otro, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        long idOtro = json.readTree(post(PATH, otro.token(), slot()).body()).get("id").asLong();
+        marcarPendiente(id, "HELD");
+        marcarPendiente(idOtro, "CREATING");
+        jdbc.update("UPDATE reservation_process SET hold_id = null, reservation_process_id = null WHERE id = ?", idOtro);
+
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("EXPIRED");
+        assertThat(estadoLocal(otro)).isEqualTo("CREATE_UNKNOWN");
+        verify(reservasCatedra, never()).listarEnFecha(eq(dueño.externalId()), any(), anyInt(), anyInt());
+        verify(reservasCatedra, never()).listarEnFecha(eq(otro.externalId()), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void siKafkaCancelaMientrasSeConsultaRestPrevaleceElResultadoTerminal() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        marcarPendiente(id, "CONFIRM_UNKNOWN");
+        when(reservasCatedra.listarEnFecha(dueño.externalId(), FECHA, 0, 20)).thenAnswer(inv -> {
+            recibir(hold, UUID.randomUUID().toString(), "AppointmentCancelled", 1,
+                    datosResultado(UUID.randomUUID().toString(), "CANCELLED", id));
+            return List.of(reservaCentral(dueño.externalId(), hold, id));
+        });
+
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void elEstadoPhonePendingNoGeneraUnPedidoLocalNiReenviaUnTelefono() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        jdbc.update("UPDATE reservation_process SET status = 'CONFIRM_UNKNOWN' WHERE id = ?", id);
+        var pendiente = new Reserva(id + 100, hold.reservationProcessId(), dueño.externalId(), 207L, null, null,
+                FECHA, HORA, null, "PHONE_PENDING", null, null);
+        when(reservasCatedra.listarEnFecha(dueño.externalId(), FECHA, 0, 20)).thenReturn(List.of(pendiente));
+
+        recuperar();
+        assertThat(estadoLocal(dueño)).isEqualTo("WAITING_FOR_PHONE");
+        assertThat(obtener(PATH + "/" + id + "/phone", dueño.token()).body()).contains("WAITING_FOR_REQUEST");
+        assertThat(post(PATH + "/" + id + "/phone", dueño.token(), Map.of("phoneNumber", "1234567")).statusCode())
+                .isEqualTo(409);
+        verifyNoInteractions(kafka);
+    }
+
+    private void marcarPendiente(long id, String estado) {
+        jdbc.update("""
+                UPDATE reservation_process SET status = ?, updated_at = now() - interval '10 minutes',
+                    expires_at = now() - interval '1 second' WHERE id = ?
+                """, estado, id);
+    }
+
+    private void recuperar() {
+        new RecuperacionReservasService(procesos, reservasCatedra, Clock.systemUTC())
+                .ejecutar(true, Duration.ofMinutes(1));
     }
 
     @Test

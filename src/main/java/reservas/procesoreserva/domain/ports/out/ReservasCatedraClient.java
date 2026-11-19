@@ -7,6 +7,7 @@ import java.util.List;
 
 public interface ReservasCatedraClient {
     List<Reserva> listar(String externalPatientId, int page, int size);
+    List<Reserva> listarEnFecha(String externalPatientId, LocalDate date, int page, int size);
     Cancelacion cancelar(String reservationProcessId, String reason);
 
     record Reserva(Long reservationId, String reservationProcessId, String externalPatientId, Long professionalId,

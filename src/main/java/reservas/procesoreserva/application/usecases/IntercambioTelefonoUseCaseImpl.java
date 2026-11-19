@@ -71,7 +71,7 @@ public class IntercambioTelefonoUseCaseImpl implements ConsultarTelefonoUseCase,
                 .orElseThrow(() -> new TelefonoReservaException(Error.PROCESO_NO_ENCONTRADO));
         switch (proceso.getStatus()) {
             case "CONFIRMING", "CONFIRM_UNKNOWN", "WAITING_FOR_PHONE", "PHONE_REJECTED",
-                    "EXPIRED", "CONFIRMED", "CANCELLED", "INVALID" -> { }
+                    "EXPIRED", "CONFIRMED", "CANCELLED", "INVALID", "FAILED" -> { }
             default -> throw new TelefonoReservaException(Error.ESTADO_INVALIDO);
         }
         return proceso;
@@ -85,7 +85,7 @@ public class IntercambioTelefonoUseCaseImpl implements ConsultarTelefonoUseCase,
         var fin = pedido == null ? proceso.getExpiresAt() : pedido.expiresAt();
         Estado estado;
         if (switch (proceso.getStatus()) {
-            case "EXPIRED", "CONFIRMED", "CANCELLED", "INVALID" -> true;
+            case "EXPIRED", "CONFIRMED", "CANCELLED", "INVALID", "FAILED" -> true;
             default -> fin != null && !fin.isAfter(ahora);
         }) {
             estado = Estado.PHONE_WINDOW_CLOSED;

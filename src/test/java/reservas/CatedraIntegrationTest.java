@@ -199,12 +199,13 @@ class CatedraIntegrationTest {
     }
 
     @Test
-    void comprobacionDeArranqueRegistraSoloEstadoOCategoriaDeError(CapturedOutput output) throws Exception {
-        esperarGet(TOKEN).andRespond(withSuccess(PROVISIONED, MediaType.APPLICATION_JSON));
+    void compruebaDeNuevoTrasFallarElArranqueYNoReabreUnaIntegracionYaPreparada(CapturedOutput output) throws Exception {
         esperarGet(TOKEN).andRespond(withStatus(HttpStatusCode.valueOf(401)).body(TOKEN));
+        esperarGet(TOKEN).andRespond(withSuccess(PROVISIONED, MediaType.APPLICATION_JSON));
         var startup = new CatedraStartupCheck(service);
         startup.run(new DefaultApplicationArguments());
-        startup.run(new DefaultApplicationArguments());
+        startup.prepararSiFalta();
+        startup.prepararSiFalta();
         assertThat(output).contains("estado=PROVISIONED", "error=NO_AUTENTICADO", "httpStatus=401")
                 .doesNotContain(TOKEN, PASSWORD, "redis.test", "usuario-prueba");
         server.verify();
