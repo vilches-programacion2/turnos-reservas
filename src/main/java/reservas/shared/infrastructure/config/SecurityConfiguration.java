@@ -28,15 +28,16 @@ public class SecurityConfiguration {
                         PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/authenticate"),
                         PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/appointment-holds"),
                         PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/appointment-holds/{id}/phone"),
+                        PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/appointments/{id}/cancel"),
                         PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.POST, "/api/appointment-holds/{id}/confirm")))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.POST, "/api/register", "/api/authenticate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health",
                                 "/actuator/health/liveness", "/actuator/health/readiness").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/account", "/api/professionals/{id}/availability",
-                                "/api/appointment-holds/{id}", "/api/appointment-holds/{id}/phone").hasRole("USER")
+                                "/api/appointment-holds/{id}", "/api/appointment-holds/{id}/phone", "/api/appointments").hasRole("USER")
                         .requestMatchers(HttpMethod.POST, "/api/appointment-holds", "/api/appointment-holds/{id}/confirm",
-                                "/api/appointment-holds/{id}/phone").hasRole("USER")
+                                "/api/appointment-holds/{id}/phone", "/api/appointments/{id}/cancel").hasRole("USER")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(authentication)))
                 .build();

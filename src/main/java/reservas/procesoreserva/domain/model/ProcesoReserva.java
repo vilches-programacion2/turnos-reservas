@@ -34,4 +34,11 @@ public class ProcesoReserva {
     private Instant createdAt;
     private Instant updatedAt;
     private Long version;
+
+    public void registrarCancelacion(Long reservaId, Instant fecha, String motivo) {
+        setReservationId(reservaId);
+        setStatus("CANCELLED");
+        setCancelledAt(fecha);
+        if (motivo != null && motivo.length() <= 500) setCancellationReason(motivo);
+    }
 }

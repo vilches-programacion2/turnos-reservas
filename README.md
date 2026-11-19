@@ -96,6 +96,8 @@ Los Compose individuales siguen disponibles para trabajar con un solo backend.
 | POST | `/api/appointment-holds/{id}/confirm` | JWT del dueño; inicia la confirmación del bloqueo. |
 | GET | `/api/appointment-holds/{id}` | JWT del dueño; consulta el estado local del proceso. |
 | GET / POST | `/api/appointment-holds/{id}/phone` | JWT del dueño; consulta el pedido o envía el teléfono. |
+| GET | `/api/appointments` | JWT de usuario; lista reservas propias con `page` y `size`. |
+| POST | `/api/appointments/{id}/cancel` | JWT del dueño; cancela una reserva confirmada usando el ID local. |
 | GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
 ## Integración con catálogo
@@ -205,6 +207,17 @@ las acciones de Kafka al recibirlas y recupera al iniciar los resultados ya
 guardados. `CONFIRMED` incluye `reservationId` y la fecha de confirmación.
 `PHONE_REJECTED` permite corregir el número mientras el pedido siga vigente.
 `EXPIRED`, `INVALID` y `CANCELLED` cierran el pedido de teléfono.
+
+## Reservas propias — RES-11
+
+`GET /api/appointments?page=0&size=20` devuelve `page`, `size` e `items`.
+Reservas filtra en cátedra por el usuario autenticado y verifica la asociación
+local de cada resultado. Si una fila no se puede verificar, responde `502`
+para toda la página.
+
+Usá el `id` local del listado en `POST /api/appointments/{id}/cancel`.
+El motivo es opcional. Si la respuesta externa se pierde, Reservas conserva
+`CANCEL_UNKNOWN` hasta recibir el resultado y evita reenviar a ciegas.
 
 ## Verificar
 
