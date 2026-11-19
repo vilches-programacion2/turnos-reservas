@@ -6,5 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface JpaProcesoReservaRepository extends JpaRepository<ProcesoReservaEntity, Long> {
     Optional<ProcesoReservaEntity> findByIdAndUserId(Long id, Long userId);
+    Optional<ProcesoReservaEntity> findByReservationProcessId(String reservationProcessId);
     Optional<ProcesoReservaEntity> findByReservationProcessIdAndUserId(String reservationProcessId, Long userId);
 }

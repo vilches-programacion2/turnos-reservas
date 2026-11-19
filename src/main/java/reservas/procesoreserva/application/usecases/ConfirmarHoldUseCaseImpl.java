@@ -1,9 +1,11 @@
 package reservas.procesoreserva.application.usecases;
 
 import java.time.Clock;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.dao.OptimisticLockingFailureException;
 import reservas.procesoreserva.application.exception.HoldCatedraException;
 import reservas.procesoreserva.application.exception.ProcesoHoldException;
 import reservas.procesoreserva.application.exception.ProcesoHoldException.Error;
@@ -31,6 +33,7 @@ public class ConfirmarHoldUseCaseImpl implements ConfirmarHoldUseCase {
             case "CONFIRMING" -> throw new ProcesoHoldException(Error.CONFIRMACION_EN_CURSO);
             case "CONFIRM_UNKNOWN", "CREATE_UNKNOWN", "CREATING" -> throw new ProcesoHoldException(Error.RESULTADO_INDETERMINADO);
             case "EXPIRED" -> throw new ProcesoHoldException(Error.HOLD_VENCIDO);
+            case "CONFIRMED", "CANCELLED", "INVALID", "PHONE_REJECTED" -> { return proceso; }
             case "HELD", "WAITING_FOR_PHONE" -> { }
             default -> throw new ProcesoHoldException(Error.ESTADO_INVALIDO);
         }
@@ -44,12 +47,13 @@ public class ConfirmarHoldUseCaseImpl implements ConfirmarHoldUseCase {
         String apellido = nombreValido(usuario.getLastName());
         // El UPDATE versionado y su commit ganan el derecho a ejecutar el POST.
         proceso = guardarEstado(proceso, "CONFIRMING");
+        Instant vence;
         try {
             var confirmacion = catedra.confirmar(proceso.getHoldId(), "user-" + usuario.getId(), nombre, apellido);
             if (!proceso.getReservationProcessId().equals(confirmacion.reservationProcessId())) {
                 throw new HoldCatedraException(HoldCatedraException.Error.RESULTADO_INDETERMINADO);
             }
-            proceso.setExpiresAt(confirmacion.expiresAt());
+            vence = confirmacion.expiresAt();
         } catch (HoldCatedraException e) {
             String estado = switch (e.getError()) {
                 case RESULTADO_INDETERMINADO, YA_CONFIRMADO -> "CONFIRM_UNKNOWN";
@@ -57,13 +61,29 @@ public class ConfirmarHoldUseCaseImpl implements ConfirmarHoldUseCase {
                 case CONFIGURACION_INVALIDA, CATEDRA_NO_AUTORIZADA -> "HELD";
                 default -> "CONFIRM_REJECTED";
             };
-            guardarEstado(proceso, estado);
+            var actualizado = guardarResultado(userId, id, estado, null);
+            if (!estado.equals(actualizado.getStatus())) return actualizado;
             log.warn("Confirmación de hold fallida: reservationProcessId={} codigo={}", proceso.getReservationProcessId(), e.getError());
             throw e;
         }
-        var guardado = guardarEstado(proceso, "WAITING_FOR_PHONE");
-        log.info("Hold confirmado inicialmente: reservationProcessId={}", guardado.getReservationProcessId());
+        var guardado = guardarResultado(userId, id, "WAITING_FOR_PHONE", vence);
+        log.info("Confirmación inicial de hold procesada reservationProcessId={} estado={}",
+                guardado.getReservationProcessId(), guardado.getStatus());
         return guardado;
+    }
+
+    private ProcesoReserva guardarResultado(Long userId, Long id, String estado, Instant vence) {
+        for (int intento = 1; ; intento++) {
+            var actual = procesos.findByIdAndUserId(id, userId)
+                    .orElseThrow(() -> new ProcesoHoldException(Error.HOLD_NO_ENCONTRADO));
+            if (!"CONFIRMING".equals(actual.getStatus())) return actual;
+            if (vence != null) actual.setExpiresAt(vence);
+            try {
+                return guardarEstado(actual, estado);
+            } catch (OptimisticLockingFailureException e) {
+                if (intento == 3) throw e;
+            }
+        }
     }
 
     private ProcesoReserva guardarEstado(ProcesoReserva proceso, String estado) {

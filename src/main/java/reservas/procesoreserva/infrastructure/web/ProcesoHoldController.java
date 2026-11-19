@@ -40,6 +40,15 @@ public class ProcesoHoldController {
         return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).body(respuesta(proceso));
     }
 
+    @GetMapping("/{id}")
+    public ResponseEntity<EstadoProcesoResponse> consultar(Principal principal, @PathVariable Long id) {
+        var proceso = holds.consultar(Long.valueOf(principal.getName()), id);
+        var estado = new EstadoProcesoResponse(proceso.getId(), proceso.getProfessionalId(),
+                proceso.getAppointmentDate(), proceso.getStartTime(), proceso.getStatus(), proceso.getExpiresAt(),
+                proceso.getReservationId(), proceso.getConfirmedAt(), proceso.getCancelledAt());
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(estado);
+    }
+
     @ExceptionHandler({MethodArgumentNotValidException.class, MethodArgumentTypeMismatchException.class,
             HttpMessageNotReadableException.class})
     public ProblemDetail entradaInvalida() {
@@ -100,4 +109,6 @@ public class ProcesoHoldController {
             @NotNull LocalTime startTime) {}
     public record HoldResponse(Long id, Long professionalId, LocalDate date, LocalTime startTime, String status,
             Instant expiresAt) {}
+    public record EstadoProcesoResponse(Long id, Long professionalId, LocalDate date, LocalTime startTime,
+            String status, Instant expiresAt, Long reservationId, Instant confirmedAt, Instant cancelledAt) {}
 }

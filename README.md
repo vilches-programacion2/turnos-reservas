@@ -94,6 +94,7 @@ Los Compose individuales siguen disponibles para trabajar con un solo backend.
 | GET | `/api/professionals/{id}/availability?date=YYYY-MM-DD` | JWT de usuario; turnos libres para un profesional y una fecha. |
 | POST | `/api/appointment-holds` | JWT de usuario; bloquea temporalmente el turno elegido. |
 | POST | `/api/appointment-holds/{id}/confirm` | JWT del dueño; inicia la confirmación del bloqueo. |
+| GET | `/api/appointment-holds/{id}` | JWT del dueño; consulta el estado local del proceso. |
 | GET / POST | `/api/appointment-holds/{id}/phone` | JWT del dueño; consulta el pedido o envía el teléfono. |
 | GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
@@ -191,11 +192,19 @@ revisarla antes de volver a intentarla.
 Consultá `GET /api/appointment-holds/{id}/phone` hasta obtener `PHONE_REQUIRED`.
 Enviá `{"phoneNumber":"+123456789"}` con `POST` al mismo recurso. El
 `202 PUBLISHED` indica que Kafka aceptó el mensaje. La confirmación de la
-reserva la determina cátedra y se procesa en RES-10.
+reserva la determina cátedra y se consulta en el estado local del proceso.
 
 Si falta el acuse, el estado es `OUTCOME_UNKNOWN` y Reservas conserva el
 intento para revisión. Al superar `expiresAt`, el estado de consulta pasa
 a `PHONE_WINDOW_CLOSED` y un nuevo POST devuelve `410`.
+
+## Resultado de la reserva — RES-10
+
+Consultá `GET /api/appointment-holds/{id}` con el JWT del dueño. Reservas aplica
+las acciones de Kafka al recibirlas y recupera al iniciar los resultados ya
+guardados. `CONFIRMED` incluye `reservationId` y la fecha de confirmación.
+`PHONE_REJECTED` permite corregir el número mientras el pedido siga vigente.
+`EXPIRED`, `INVALID` y `CANCELLED` cierran el pedido de teléfono.
 
 ## Verificar
 

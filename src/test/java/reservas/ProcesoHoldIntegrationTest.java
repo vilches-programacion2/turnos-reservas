@@ -9,12 +9,16 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -29,6 +33,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import reservas.integracion.infrastructure.kafka.KafkaCatedraAdapter;
 import reservas.procesoreserva.application.exception.HoldCatedraException;
+import reservas.procesoreserva.application.service.ResultadosReservaService;
+import reservas.procesoreserva.domain.model.AccionReserva;
+import reservas.procesoreserva.domain.ports.out.AccionesReservaRepository;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient.Hold;
 import reservas.procesoreserva.domain.ports.out.HoldsCatedraClient.Confirmacion;
@@ -60,6 +67,8 @@ class ProcesoHoldIntegrationTest {
     @Autowired private UsuarioRepository usuarios;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private AccionesReservaListener acciones;
+    @Autowired private AccionesReservaRepository accionesGuardadas;
+    @Autowired private ResultadosReservaService resultados;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -108,10 +117,118 @@ class ProcesoHoldIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM reservation_action WHERE event_id = ?", Long.class, pedido))
                 .isEqualTo(1L);
         String resultado = UUID.randomUUID().toString();
-        recibir(hold, resultado, "AppointmentConfirmed", 3);
+        recibir(hold, resultado, "AppointmentConfirmed", 3, datosResultado(pedido, "CONFIRMED", id));
         assertThat(jdbc.queryForObject("SELECT details->>'reservationId' FROM reservation_action WHERE event_id = ?",
-                String.class, resultado)).isEqualTo("123");
+                String.class, resultado)).isEqualTo(Long.toString(id + 100));
+        var proceso = obtener(PATH + "/" + id, dueño.token());
+        assertThat(proceso.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(proceso.body()).get("status").asString()).isEqualTo("CONFIRMED");
+        assertThat(json.readTree(proceso.body()).get("reservationId").asLong()).isEqualTo(id + 100);
+        assertThat(proceso.body()).doesNotContain(hold.holdId(), hold.reservationProcessId());
+        assertThat(obtener(PATH + "/" + id, otro.token()).statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void resultadoKafkaGanaAunqueLaRespuestaRestLlegueDespues() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        String pedido = UUID.randomUUID().toString();
+        when(catedra.confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez")).thenAnswer(inv -> {
+            recibir(hold, pedido, "AdditionalInformationRequested", 1);
+            recibir(hold, UUID.randomUUID().toString(), "AppointmentConfirmed", 2, datosResultado(pedido, "CONFIRMED", id));
+            return new Confirmacion(hold.reservationProcessId(), hold.expiresAt());
+        });
+        var respuesta = post(confirmar(id), dueño.token(), null);
+        assertThat(respuesta.statusCode()).isEqualTo(202);
+        assertThat(json.readTree(respuesta.body()).get("status").asString()).isEqualTo("CONFIRMED");
+        verify(catedra).confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez");
+    }
+
+    @Test
+    void rechazoHabilitaUnEnvioNuevoYElDuplicadoNoVuelveAReabrir() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        when(catedra.confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez"))
+                .thenReturn(new Confirmacion(hold.reservationProcessId(), hold.expiresAt()));
+        assertThat(post(confirmar(id), dueño.token(), null).statusCode()).isEqualTo(202);
+        var pedido = UUID.randomUUID().toString();
+        var rechazo = UUID.randomUUID().toString();
+        recibir(hold, pedido, "AdditionalInformationRequested", 1);
+        var envios = new ArrayList<UUID>();
+        when(kafka.publicar(any(EnvioTelefono.class))).thenAnswer(inv -> {
+            envios.add(inv.<EnvioTelefono>getArgument(0).eventId());
+            return Resultado.PUBLICADO;
+        });
+        String camino = PATH + "/" + id + "/phone";
+        var telefono = Map.of("phoneNumber", "1234567");
+        var datos = Map.<String, Object>of("requestEventId", pedido, "reason", "INVALID_PHONE_NUMBER");
+        assertThat(post(camino, dueño.token(), telefono).statusCode()).isEqualTo(202);
+        recibir(hold, rechazo, "AdditionalInformationRejected", 2, datos);
+        assertThat(estadoLocal(dueño)).isEqualTo("PHONE_REJECTED");
+        assertThat(obtener(camino, dueño.token()).body()).contains("PHONE_REQUIRED");
+        assertThat(post(camino, dueño.token(), telefono).statusCode()).isEqualTo(202);
+        recibir(hold, rechazo, "AdditionalInformationRejected", 3, datos);
+        assertThat(obtener(camino, dueño.token()).body()).contains("PUBLISHED");
+        assertThat(envios).hasSize(2).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void recuperaEventosGuardadosEnOrdenYSoloAplicaUnaVez() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        when(catedra.confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez"))
+                .thenReturn(new Confirmacion(hold.reservationProcessId(), hold.expiresAt()));
+        assertThat(post(confirmar(id), dueño.token(), null).statusCode()).isEqualTo(202);
+        var pedido = UUID.randomUUID().toString();
+        recibir(hold, pedido, "AdditionalInformationRequested", 1);
+        var confirmado = UUID.randomUUID().toString();
+        var cancelado = UUID.randomUUID().toString();
+        var inicio = Instant.now();
+        accionesGuardadas.registrar(new AccionReserva(cancelado, "AppointmentCancelled", hold.reservationProcessId(),
+                hold.holdId(), inicio.plusSeconds(1), null, 0, 3, datosResultado(pedido, "CANCELLED", id)));
+        accionesGuardadas.registrar(new AccionReserva(confirmado, "AppointmentConfirmed", hold.reservationProcessId(),
+                hold.holdId(), inicio, null, 0, 2, datosResultado(pedido, "CONFIRMED", id)));
         assertThat(estadoLocal(dueño)).isEqualTo("WAITING_FOR_PHONE");
+
+        resultados.recuperarGuardados();
+        var proceso = json.readTree(obtener(PATH + "/" + id, dueño.token()).body());
+        assertThat(proceso.get("status").asString()).isEqualTo("CANCELLED");
+        assertThat(proceso.get("confirmedAt").isString()).isTrue();
+        assertThat(proceso.get("cancelledAt").isString()).isTrue();
+        var version = procesos.findByIdAndUserId(id, dueño.id()).orElseThrow().getVersion();
+
+        recibir(hold, confirmado, "AppointmentConfirmed", 4, datosResultado(pedido, "CONFIRMED", id));
+        recibir(hold, UUID.randomUUID().toString(), "AppointmentConfirmed", 5, datosResultado(pedido, "CONFIRMED", id));
+        resultados.recuperarGuardados();
+        assertThat(estadoLocal(dueño)).isEqualTo("CANCELLED");
+        assertThat(procesos.findByIdAndUserId(id, dueño.id()).orElseThrow().getVersion()).isEqualTo(version);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"AppointmentProcessExpired,HOLD_EXPIRED,EXPIRED",
+            "AppointmentProcessInvalid,REQUEST_EVENT_MISMATCH,INVALID"})
+    void elProcesoCerradoNoAceptaTelefonoNiUnaConfirmacionTardia(String tipo, String razon, String estado) throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        when(catedra.confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez"))
+                .thenReturn(new Confirmacion(hold.reservationProcessId(), hold.expiresAt()));
+        assertThat(post(confirmar(id), dueño.token(), null).statusCode()).isEqualTo(202);
+        var pedido = UUID.randomUUID().toString();
+        recibir(hold, pedido, "AdditionalInformationRequested", 1);
+        var holdAjeno = new Hold("otro-hold", hold.reservationProcessId(), hold.expiresAt());
+        recibir(holdAjeno, UUID.randomUUID().toString(), tipo, 2, Map.of("reason", razon, "requestEventId", pedido));
+        assertThat(estadoLocal(dueño)).isEqualTo("WAITING_FOR_PHONE");
+
+        recibir(hold, UUID.randomUUID().toString(), tipo, 3, Map.of("reason", razon, "requestEventId", pedido));
+        recibir(hold, UUID.randomUUID().toString(), "AppointmentConfirmed", 4, datosResultado(pedido, "CONFIRMED", id));
+        assertThat(estadoLocal(dueño)).isEqualTo(estado);
+        assertThat(post(PATH + "/" + id + "/phone", dueño.token(), Map.of("phoneNumber", "1234567")).statusCode())
+                .isEqualTo(410);
+        verifyNoInteractions(kafka);
     }
 
     @Test
@@ -142,14 +259,24 @@ class ProcesoHoldIntegrationTest {
     }
 
     private void recibir(Hold hold, String id, String tipo, long offset) {
-        var evento = Map.of("eventType", tipo, "eventId", id, "schemaVersion", 1,
+        recibir(hold, id, tipo, offset, Map.of());
+    }
+
+    private void recibir(Hold hold, String id, String tipo, long offset, Map<String, Object> datos) {
+        var evento = new HashMap<String, Object>(Map.of("eventType", tipo, "eventId", id, "schemaVersion", 1,
                 "reservationProcessId", hold.reservationProcessId(), "holdId", hold.holdId(),
                 "occurredAt", Instant.now().toString(), "expiresAt", hold.expiresAt().toString(),
-                "requiredField", "PHONE_NUMBER", "reservationId", 123, "unknownField", "ignorar");
+                "requiredField", "PHONE_NUMBER", "unknownField", "ignorar"));
+        evento.putAll(datos);
         var ack = mock(Acknowledgment.class);
         acciones.onMessage(new ConsumerRecord<>("acciones", 0, offset, hold.reservationProcessId(),
                 json.writeValueAsString(evento)), ack);
         verify(ack).acknowledge();
+    }
+
+    private Map<String, Object> datosResultado(String pedido, String estado, long id) {
+        return Map.of("requestEventId", pedido, "reservationId", id + 100, "professionalId", 207,
+                "date", FECHA.toString(), "startTime", HORA.toString(), "status", estado);
     }
 
     @Test
