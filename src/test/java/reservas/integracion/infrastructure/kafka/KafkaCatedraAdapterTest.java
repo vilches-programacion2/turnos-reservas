@@ -16,11 +16,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.listener.KafkaMessageListenerContainer;
 import reservas.integracion.application.exception.IntegracionCatedraException;
 import reservas.integracion.application.exception.IntegracionCatedraException.Error;
 import reservas.integracion.application.usecases.PrepararIntegracionCatedraUseCaseImpl;
 import reservas.integracion.domain.model.EstadoProvisionamiento;
 import reservas.integracion.domain.model.IntegracionCatedra;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -43,7 +46,7 @@ class KafkaCatedraAdapterTest {
     }
 
     @Test
-    void usaConfiguracionAsignadaYConsultaSoloMetadataSinConsumirNiPublicar() {
+    void usaConfiguracionAsignadaYArrancaConsumidorDeAcciones() {
         metadataCorrecta();
         var integracion = integracion();
         adapter.preparar(integracion);
@@ -62,7 +65,10 @@ class KafkaCatedraAdapterTest {
         verify(admin).describeTopics(TOPICS);
         verify(admin).close(Duration.ofSeconds(1));
         verifyNoMoreInteractions(admin);
+        assertThat(adapter.topicAcciones).isEqualTo(TOPICS.get(0));
+        verify(adapter.listener).start();
         adapter.cerrar();
+        verify(adapter.listener).stop();
     }
 
     @ParameterizedTest
@@ -180,11 +186,19 @@ class KafkaCatedraAdapterTest {
     private static class ClienteControlado extends KafkaCatedraAdapter {
         private final Admin admin;
         private final AtomicInteger abiertos = new AtomicInteger();
+        private final KafkaMessageListenerContainer<String, String> listener = mock();
         private Map<String, Object> adminConfig;
+        private String topicAcciones;
 
         ClienteControlado(CatedraKafkaProperties properties, Admin admin) {
-            super(properties);
+            super(properties, mock(), JsonMapper.builder().build());
             this.admin = admin;
+        }
+
+        @Override
+        protected KafkaMessageListenerContainer<String, String> crearConsumidor(ConsumerFactory<String, String> factory, String topic) {
+            topicAcciones = topic;
+            return listener;
         }
 
         @Override

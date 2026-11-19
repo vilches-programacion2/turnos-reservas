@@ -94,6 +94,7 @@ Los Compose individuales siguen disponibles para trabajar con un solo backend.
 | GET | `/api/professionals/{id}/availability?date=YYYY-MM-DD` | JWT de usuario; turnos libres para un profesional y una fecha. |
 | POST | `/api/appointment-holds` | JWT de usuario; bloquea temporalmente el turno elegido. |
 | POST | `/api/appointment-holds/{id}/confirm` | JWT del dueño; inicia la confirmación del bloqueo. |
+| GET / POST | `/api/appointment-holds/{id}/phone` | JWT del dueño; consulta el pedido o envía el teléfono. |
 | GET | `/actuator/health`, `/actuator/health/readiness`, `/actuator/health/liveness` | Público. |
 
 ## Integración con catálogo
@@ -184,6 +185,17 @@ Si el turno se ocupó en el intervalo, la creación devuelve `409 SLOT_UNAVAILAB
 Un bloqueo vencido devuelve `410 HOLD_EXPIRED`. Ante un resultado indeterminado
 (`503 HOLD_OUTCOME_UNKNOWN`), Reservas conserva el estado de la operación para
 revisarla antes de volver a intentarla.
+
+## Intercambio de teléfono — RES-09
+
+Consultá `GET /api/appointment-holds/{id}/phone` hasta obtener `PHONE_REQUIRED`.
+Enviá `{"phoneNumber":"+123456789"}` con `POST` al mismo recurso. El
+`202 PUBLISHED` indica que Kafka aceptó el mensaje. La confirmación de la
+reserva la determina cátedra y se procesa en RES-10.
+
+Si falta el acuse, el estado es `OUTCOME_UNKNOWN` y Reservas conserva el
+intento para revisión. Al superar `expiresAt`, el estado de consulta pasa
+a `PHONE_WINDOW_CLOSED` y un nuevo POST devuelve `410`.
 
 ## Verificar
 
