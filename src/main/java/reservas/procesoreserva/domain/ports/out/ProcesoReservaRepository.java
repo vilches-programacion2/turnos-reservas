@@ -6,5 +6,6 @@ import java.util.Optional;
 public interface ProcesoReservaRepository {
     ProcesoReserva save(ProcesoReserva value);
     Optional<ProcesoReserva> findByIdAndUserId(Long id, Long userId);
+    Optional<ProcesoReserva> findByReservationProcessId(String reservationProcessId);
     Optional<ProcesoReserva> findByReservationProcessIdAndUserId(String reservationProcessId, Long userId);
 }

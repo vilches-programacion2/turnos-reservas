@@ -28,6 +28,11 @@ public class JpaProcesoReservaRepositoryAdapter implements ProcesoReservaReposit
     }
 
     @Override
+    public Optional<ProcesoReserva> findByReservationProcessId(String reservationProcessId) {
+        return repository.findByReservationProcessId(reservationProcessId).map(mapper::toDomainModel);
+    }
+
+    @Override
     public Optional<ProcesoReserva> findByReservationProcessIdAndUserId(String reservationProcessId, Long userId) {
         return repository.findByReservationProcessIdAndUserId(reservationProcessId, userId).map(mapper::toDomainModel);
     }
