@@ -7,7 +7,9 @@ import reservas.procesoreserva.infrastructure.persistence.mapper.ProcesoReservaM
 import java.util.Optional;
 import java.util.Collection;
 import java.util.List;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,5 +44,11 @@ public class JpaProcesoReservaRepositoryAdapter implements ProcesoReservaReposit
     @Override
     public Optional<ProcesoReserva> findByReservationProcessIdAndUserId(String reservationProcessId, Long userId) {
         return repository.findByReservationProcessIdAndUserId(reservationProcessId, userId).map(mapper::toDomainModel);
+    }
+
+    @Override
+    public List<ProcesoReserva> buscarPendientesDeRecuperacion(Long desdeId, Instant ahora, Instant enCursoDesde, int limite) {
+        return repository.buscarPendientesDeRecuperacion(desdeId, ahora, enCursoDesde, PageRequest.of(0, limite))
+                .stream().map(mapper::toDomainModel).toList();
     }
 }

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -54,6 +55,15 @@ class CatedraReservasHttpAdapterTest {
             assertThat(item.reservationId()).isEqualTo(12L);
             assertThat(item.toString()).doesNotContain("1234567");
         });
+        server.verify();
+    }
+
+    @Test
+    void acotaLaRecuperacionAlPacienteYLaFecha() {
+        server.expect(requestTo(APPOINTMENTS + "?externalPatientId=user-42&page=0&size=20&from=2026-11-25&to=2026-11-25"))
+                .andExpect(method(HttpMethod.GET)).andExpect(header("Authorization", "Bearer token-ficticio"))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+        assertThat(adapter.listarEnFecha("user-42", LocalDate.of(2026, 11, 25), 0, 20)).isEmpty();
         server.verify();
     }
 

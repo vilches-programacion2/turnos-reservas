@@ -26,11 +26,19 @@ public class CatedraReservasHttpAdapter implements ReservasCatedraClient {
 
     @Override
     public List<Reserva> listar(String externalPatientId, int page, int size) {
+        return listarEnFecha(externalPatientId, null, page, size);
+    }
+
+    @Override
+    public List<Reserva> listarEnFecha(String externalPatientId, LocalDate date, int page, int size) {
         String token = leerToken();
         try {
-            return catedraRestClient.get().uri(uri -> uri.path("/api/appointments")
-                            .queryParam("externalPatientId", externalPatientId).queryParam("page", page)
-                            .queryParam("size", size).build())
+            return catedraRestClient.get().uri(uri -> {
+                        uri.path("/api/appointments").queryParam("externalPatientId", externalPatientId)
+                                .queryParam("page", page).queryParam("size", size);
+                        if (date != null) uri.queryParam("from", date).queryParam("to", date);
+                        return uri.build();
+                    })
                     .accept(MediaType.APPLICATION_JSON).headers(headers -> headers.setBearerAuth(token))
                     .exchange((request, response) -> {
                         if (response.getStatusCode().value() != 200) {

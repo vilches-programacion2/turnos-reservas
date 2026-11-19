@@ -62,7 +62,7 @@ public class CancelarReservaPropiaUseCaseImpl implements CancelarReservaPropiaUs
     private ProcesoReserva finalizar(Long userId, Long id, Cancelacion resultado, String reason, boolean incierto) {
         for (int intento = 1; ; intento++) {
             var actual = buscar(userId, id);
-            if (!"CANCELLING".equals(actual.getStatus())) return actual;
+            if (!"CANCELLING".equals(actual.getStatus()) && !"CANCEL_UNKNOWN".equals(actual.getStatus())) return actual;
             if (resultado != null) {
                 actual.registrarCancelacion(resultado.reservationId(), resultado.cancelledAt(), reason);
             } else {

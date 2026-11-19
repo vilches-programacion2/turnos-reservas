@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 import reservas.procesoreserva.application.exception.HoldCatedraException;
 import reservas.procesoreserva.application.exception.ProcesoHoldException;
@@ -40,21 +41,33 @@ public class CrearHoldUseCaseImpl implements CrearHoldUseCase {
         try {
             hold = catedra.crear(professionalId, date, startTime, "user-" + usuario.getId());
         } catch (HoldCatedraException e) {
-            proceso.setStatus(e.getError() == HoldCatedraException.Error.RESULTADO_INDETERMINADO
+            guardarResultado(proceso, null, e.getError() == HoldCatedraException.Error.RESULTADO_INDETERMINADO
                     ? "CREATE_UNKNOWN" : "CREATE_REJECTED");
-            proceso.setUpdatedAt(disponibilidadClock.instant());
-            procesos.save(proceso);
             log.warn("Creación de hold fallida: procesoLocalId={} codigo={}", proceso.getId(), e.getError());
             throw e;
         }
 
-        proceso.setHoldId(hold.holdId());
-        proceso.setReservationProcessId(hold.reservationProcessId());
-        proceso.setExpiresAt(hold.expiresAt());
-        proceso.setStatus("HELD");
-        proceso.setUpdatedAt(disponibilidadClock.instant());
-        var guardado = procesos.save(proceso);
+        var guardado = guardarResultado(proceso, hold, "HELD");
         log.info("Hold creado: procesoLocalId={} reservationProcessId={}", guardado.getId(), guardado.getReservationProcessId());
         return guardado;
+    }
+
+    private ProcesoReserva guardarResultado(ProcesoReserva proceso, HoldsCatedraClient.Hold hold, String estado) {
+        for (int intento = 1; ; intento++) {
+            if (hold != null) {
+                proceso.setHoldId(hold.holdId());
+                proceso.setReservationProcessId(hold.reservationProcessId());
+                proceso.setExpiresAt(hold.expiresAt());
+            }
+            proceso.setStatus(estado);
+            proceso.setUpdatedAt(disponibilidadClock.instant());
+            try {
+                return procesos.save(proceso);
+            } catch (OptimisticLockingFailureException e) {
+                if (intento == 3) throw e;
+                proceso = procesos.findByIdAndUserId(proceso.getId(), proceso.getUserId())
+                        .filter(actual -> "CREATE_UNKNOWN".equals(actual.getStatus())).orElseThrow(() -> e);
+            }
+        }
     }
 }

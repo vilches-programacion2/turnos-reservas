@@ -76,7 +76,7 @@ public class ConfirmarHoldUseCaseImpl implements ConfirmarHoldUseCase {
         for (int intento = 1; ; intento++) {
             var actual = procesos.findByIdAndUserId(id, userId)
                     .orElseThrow(() -> new ProcesoHoldException(Error.HOLD_NO_ENCONTRADO));
-            if (!"CONFIRMING".equals(actual.getStatus())) return actual;
+            if (!"CONFIRMING".equals(actual.getStatus()) && !"CONFIRM_UNKNOWN".equals(actual.getStatus())) return actual;
             if (vence != null) actual.setExpiresAt(vence);
             try {
                 return guardarEstado(actual, estado);

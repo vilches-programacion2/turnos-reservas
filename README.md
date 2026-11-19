@@ -135,18 +135,16 @@ El Compose individual conserva esta integración deshabilitada por defecto.
 
 Solo el estado `PROVISIONED` prepara los clientes Spring Kafka con los brokers,
 topics y consumer group asignados por cátedra. Se comprueban los metadatos de
-los topics de acciones y teléfono; todavía no se publican ni consumen eventos,
-no se crean topics ni se confirman offsets. Esta comprobación no acredita
-permisos de publicación o consumo. Los mensajes usarán claves y valores String
-para interpretar el JSON explícitamente en el flujo posterior.
+los topics de acciones y teléfono antes de iniciar el consumo. Los permisos
+de publicación y consumo se comprueban al usar ambos flujos.
 
 REST usa por defecto 3s de conexión y 5s de lectura, sin redirecciones ni
 reintentos automáticos. Kafka limita sus solicitudes a 5s, la operación a 10s
 y los reintentos a dos, con pausa de 250ms. El protocolo de seguridad es
 configurable; no se reutiliza la contraseña de Redis como credencial Kafka.
 Un fallo de integración se informa con un código sin secretos y permite seguir
-usando registro, login y cuenta. Tras recuperar la conectividad, reiniciar
-Reservas para repetir la preparación.
+usando registro, login y cuenta. Si falla la preparación inicial, Reservas
+vuelve a intentar al recuperar conectividad.
 
 ## Disponibilidad — RES-07
 
@@ -218,6 +216,18 @@ para toda la página.
 Usá el `id` local del listado en `POST /api/appointments/{id}/cancel`.
 El motivo es opcional. Si la respuesta externa se pierde, Reservas conserva
 `CANCEL_UNKNOWN` hasta recibir el resultado y evita reenviar a ciegas.
+
+## Recuperación — RES-12
+
+Al arrancar y cada 60 s, Reservas revisa procesos pendientes en tandas
+acotadas. El intervalo se puede configurar con
+`RESERVAS_RECUPERACION_INTERVALO`. Usa Kafka y, si hace falta, el listado
+REST de cátedra filtrado por paciente y fecha. Las consultas vacías y las
+respuestas perdidas conservan la incertidumbre sin reenviar operaciones.
+Los bloqueos sin confirmar con vencimiento conocido pasan a `EXPIRED`.
+
+Si el consumidor se detiene por un fallo de persistencia, corregí la causa
+y reiniciá Reservas. Kafka conserva el offset pendiente.
 
 ## Verificar
 
