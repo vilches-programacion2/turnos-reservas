@@ -68,17 +68,17 @@ class ServiceBootstrapTest {
                 """);
         assertThat(login.statusCode()).isEqualTo(200);
         var token = json.readTree(login.body()).path("id_token").asString();
+        assertThat(get("/api/account", token).statusCode()).isEqualTo(200);
+        assertThat(get("/api/appointment-holds/1", token).statusCode()).isEqualTo(404);
 
         DATABASE.stop();
         assertHealth("/actuator/health/readiness", 503, "DOWN");
         // Una caída de PostgreSQL impide recibir tráfico, pero no mata el proceso.
         assertHealth("/actuator/health/liveness", 200, "UP");
         for (String path : new String[] {"/api/account", "/api/appointment-holds/1"}) {
-            var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                    .timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer " + token).GET().build();
-            var respuesta = client.send(request, HttpResponse.BodyHandlers.ofString());
-            assertThat(respuesta.statusCode()).isEqualTo(503);
-            assertThat(respuesta.body()).contains("RESERVAS_UNAVAILABLE")
+            var respuesta = get(path, token);
+            assertThat(respuesta.statusCode()).as("Estado HTTP de %s sin PostgreSQL", path).isEqualTo(503);
+            assertThat(respuesta.body()).as("Respuesta de %s sin PostgreSQL", path).contains("RESERVAS_UNAVAILABLE")
                     .doesNotContain("jdbc:", "password", "stackTrace", token);
         }
     }
@@ -99,5 +99,11 @@ class ServiceBootstrapTest {
     private HttpResponse<String> get(String path) throws Exception {
         return client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                 .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> get(String path, String token) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .timeout(Duration.ofSeconds(10)).header("Authorization", "Bearer " + token)
+                .GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 }
