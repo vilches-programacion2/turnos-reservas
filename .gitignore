@@ -10,6 +10,7 @@
 *.log
 hs_err_pid*
 replay_pid*
+.attach_pid*
 # Keep build wrappers tracked
 !gradle/wrapper/gradle-wrapper.jar
 !.mvn/wrapper/maven-wrapper.jar
@@ -18,7 +19,7 @@ replay_pid*
 .kotlin/
 build/
 target/
-out/
+/out/
 bin/
 .idea/
 *.iml
@@ -34,9 +35,13 @@ local.properties
 *.jks
 *.keystore
 # Local configuration and secrets
+secrets/
+.local/
+.java-env/
 .env
 .env.*
 !.env.example
+!.env.integracion.example
 *.pem
 *.key
 .DS_Store

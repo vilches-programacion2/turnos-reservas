@@ -1,0 +1,169 @@
+name: turnos-integracion
+
+services:
+  reservas-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${RESERVAS_DB_NAME:-reservas}
+      POSTGRES_USER: ${RESERVAS_DB_USER:-reservas}
+      POSTGRES_PASSWORD: ${RESERVAS_DB_PASSWORD:?Definir RESERVAS_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${RESERVAS_DB_PORT:-5433}:5432"
+    volumes:
+      - reservas-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks: [reservas-db]
+
+  catalogo-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${CATALOGO_DB_NAME:-catalogo}
+      POSTGRES_USER: ${CATALOGO_DB_USER:-catalogo}
+      POSTGRES_PASSWORD: ${CATALOGO_DB_PASSWORD:?Definir CATALOGO_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${CATALOGO_DB_PORT:-5434}:5432"
+    volumes:
+      - catalogo-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks: [catalogo-db]
+
+  reservas:
+    image: turnos-reservas:integracion
+    build: .
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    environment:
+      DB_URL: jdbc:postgresql://reservas-db:5432/${RESERVAS_DB_NAME:-reservas}
+      DB_USER: ${RESERVAS_DB_USER:-reservas}
+      DB_PASSWORD: ${RESERVAS_DB_PASSWORD:?Definir RESERVAS_DB_PASSWORD}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      JWT_PRIVATE_KEY: file:/run/secrets/private.pem
+      JWT_PUBLIC_KEY: file:/run/secrets/public.pem
+      JWT_ISSUER: ${JWT_ISSUER:-https://turnos-reservas.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-turnos-reservas}
+      JWT_CATALOG_AUDIENCE: ${JWT_CATALOG_AUDIENCE:-turnos-catalogo}
+      JWT_TIME_TO_LIVE: ${JWT_TIME_TO_LIVE:-30m}
+      CATALOGO_BASE_URL: http://catalogo:8080
+      CATALOGO_CONNECT_TIMEOUT: ${CATALOGO_CONNECT_TIMEOUT:-3s}
+      CATALOGO_READ_TIMEOUT: ${CATALOGO_READ_TIMEOUT:-5s}
+      CATEDRA_ENABLED: ${CATEDRA_ENABLED:-true}
+      CATEDRA_BASE_URL: ${CATEDRA_BASE_URL:?Definir CATEDRA_BASE_URL}
+      CATEDRA_TOKEN_FILE: /run/secrets/catedra.jwt
+      CATEDRA_CONNECT_TIMEOUT: ${CATEDRA_CONNECT_TIMEOUT:-3s}
+      CATEDRA_READ_TIMEOUT: ${CATEDRA_READ_TIMEOUT:-5s}
+      CATEDRA_KAFKA_SECURITY_PROTOCOL: ${CATEDRA_KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      CATEDRA_KAFKA_REQUEST_TIMEOUT: ${CATEDRA_KAFKA_REQUEST_TIMEOUT:-5s}
+      CATEDRA_KAFKA_OPERATION_TIMEOUT: ${CATEDRA_KAFKA_OPERATION_TIMEOUT:-10s}
+      CATEDRA_KAFKA_RETRY_BACKOFF: ${CATEDRA_KAFKA_RETRY_BACKOFF:-250ms}
+      CATEDRA_KAFKA_RETRIES: ${CATEDRA_KAFKA_RETRIES:-2}
+      RESERVAS_RECUPERACION_INTERVALO: ${RESERVAS_RECUPERACION_INTERVALO:-60s}
+    volumes:
+      - type: bind
+        source: ${JWT_PRIVATE_KEY_SOURCE:-./secrets/private.pem}
+        target: /run/secrets/private.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${JWT_PUBLIC_KEY_SOURCE:-./secrets/public.pem}
+        target: /run/secrets/public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATEDRA_TOKEN_SOURCE:?Definir CATEDRA_TOKEN_SOURCE}
+        target: /run/secrets/catedra.jwt
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:${RESERVAS_PORT:-8081}:8080"
+    depends_on:
+      reservas-db:
+        condition: service_healthy
+    networks: [backend, reservas-db]
+
+  catalogo:
+    image: turnos-catalogo:integracion
+    build:
+      context: ${CATALOGO_CONTEXT:-../turnos-catalogo}
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    environment:
+      DB_URL: jdbc:postgresql://catalogo-db:5432/${CATALOGO_DB_NAME:-catalogo}
+      DB_USER: ${CATALOGO_DB_USER:-catalogo}
+      DB_PASSWORD: ${CATALOGO_DB_PASSWORD:?Definir CATALOGO_DB_PASSWORD}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      JWT_PUBLIC_KEY: file:/run/secrets/public.pem
+      JWT_ISSUER: ${JWT_ISSUER:-https://turnos-reservas.local}
+      JWT_AUDIENCE: ${JWT_CATALOG_AUDIENCE:-turnos-catalogo}
+      CATEDRA_ENABLED: ${CATEDRA_ENABLED:-true}
+      CATEDRA_BASE_URL: ${CATEDRA_BASE_URL:?Definir CATEDRA_BASE_URL}
+      CATEDRA_TOKEN_FILE: /run/secrets/catedra.jwt
+      CATEDRA_CONNECT_TIMEOUT: ${CATEDRA_CONNECT_TIMEOUT:-3s}
+      CATEDRA_READ_TIMEOUT: ${CATEDRA_READ_TIMEOUT:-5s}
+    volumes:
+      - type: bind
+        source: ${JWT_PUBLIC_KEY_SOURCE:-./secrets/public.pem}
+        target: /run/secrets/public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CATEDRA_TOKEN_SOURCE:?Definir CATEDRA_TOKEN_SOURCE}
+        target: /run/secrets/catedra.jwt
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:${CATALOGO_PORT:-8082}:8080"
+    depends_on:
+      catalogo-db:
+        condition: service_healthy
+    networks: [backend, catalogo-db]
+
+  verificacion:
+    image: turnos-reservas-verificacion:integracion
+    build:
+      context: .
+      target: build
+    profiles: [verificacion]
+    environment:
+      BACKEND_COMPOSE_TEST: "true"
+      RESERVAS_TEST_URL: http://reservas:8080
+      CATALOGO_TEST_URL: http://catalogo:8080
+      JWT_PUBLIC_KEY_FILE: /run/secrets/public.pem
+      JWT_ISSUER: ${JWT_ISSUER:-https://turnos-reservas.local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-turnos-reservas}
+      JWT_CATALOG_AUDIENCE: ${JWT_CATALOG_AUDIENCE:-turnos-catalogo}
+    volumes:
+      - type: bind
+        source: ${JWT_PUBLIC_KEY_SOURCE:-./secrets/public.pem}
+        target: /run/secrets/public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    command: ["./mvnw", "--batch-mode", "--no-transfer-progress", "-Dtest=BackendComposeIntegrationTest", "test"]
+    depends_on:
+      reservas:
+        condition: service_started
+      catalogo:
+        condition: service_started
+    networks: [backend]
+
+volumes:
+  reservas-data:
+  catalogo-data:
+
+networks:
+  backend:
+  reservas-db:
+    internal: true
+  catalogo-db:
+    internal: true
