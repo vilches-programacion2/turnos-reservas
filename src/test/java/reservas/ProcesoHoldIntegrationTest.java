@@ -494,15 +494,47 @@ class ProcesoHoldIntegrationTest {
     }
 
     private void recibir(Hold hold, String id, String tipo, long offset, Map<String, Object> datos) {
+        var ack = mock(Acknowledgment.class);
+        acciones.onMessage(mensaje(hold, id, tipo, offset, datos), ack);
+        verify(ack).acknowledge();
+    }
+
+    private ConsumerRecord<String, String> mensaje(Hold hold, String id, String tipo, long offset, Map<String, Object> datos) {
         var evento = new HashMap<String, Object>(Map.of("eventType", tipo, "eventId", id, "schemaVersion", 1,
                 "reservationProcessId", hold.reservationProcessId(), "holdId", hold.holdId(),
                 "occurredAt", Instant.now().toString(), "expiresAt", hold.expiresAt().toString(),
                 "requiredField", "PHONE_NUMBER", "unknownField", "ignorar"));
         evento.putAll(datos);
-        var ack = mock(Acknowledgment.class);
-        acciones.onMessage(new ConsumerRecord<>("acciones", 0, offset, hold.reservationProcessId(),
-                json.writeValueAsString(evento)), ack);
-        verify(ack).acknowledge();
+        return new ConsumerRecord<>("acciones", 0, offset, hold.reservationProcessId(), json.writeValueAsString(evento));
+    }
+
+    @Test
+    void siFallaElAcuseDeKafkaLaReentregaNoVuelveAAplicarLaConfirmacion() throws Exception {
+        var dueño = usuario();
+        var hold = prepararHold(dueño, Instant.now().plusSeconds(240));
+        long id = json.readTree(post(PATH, dueño.token(), slot()).body()).get("id").asLong();
+        when(catedra.confirmar(hold.holdId(), dueño.externalId(), "Ana", "Pérez"))
+                .thenReturn(new Confirmacion(hold.reservationProcessId(), hold.expiresAt()));
+        assertThat(post(confirmar(id), dueño.token(), null).statusCode()).isEqualTo(202);
+        var pedido = UUID.randomUUID().toString();
+        recibir(hold, pedido, "AdditionalInformationRequested", 1);
+        var evento = UUID.randomUUID().toString();
+        var confirmacion = mensaje(hold, evento, "AppointmentConfirmed", 2, datosResultado(pedido, "CONFIRMED", id));
+
+        var falloAcuse = mock(Acknowledgment.class);
+        doAnswer(inv -> {
+            assertThat(estadoLocal(dueño)).isEqualTo("CONFIRMED");
+            throw new IllegalStateException("Acuse de prueba perdido");
+        }).when(falloAcuse).acknowledge();
+        assertThatThrownBy(() -> acciones.onMessage(confirmacion, falloAcuse))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Acuse de prueba perdido");
+        var version = procesos.findByIdAndUserId(id, dueño.id()).orElseThrow().getVersion();
+        var acuse = mock(Acknowledgment.class);
+        acciones.onMessage(confirmacion, acuse);
+        verify(acuse).acknowledge();
+        assertThat(procesos.findByIdAndUserId(id, dueño.id()).orElseThrow().getVersion()).isEqualTo(version);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM reservation_action WHERE event_id = ?", Long.class, evento))
+                .isEqualTo(1L);
     }
 
     private Map<String, Object> datosResultado(String pedido, String estado, long id) {

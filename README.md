@@ -2,7 +2,8 @@
 
 Backend de usuarios y reservas: Java 25, Spring Boot, PostgreSQL y Flyway.
 Implementa registro, autenticación con JWT RS256 e integración HTTP con catálogo.
-El flujo de reservas sigue en desarrollo.
+Gestiona disponibilidad, bloqueos temporales, confirmación y cancelación de reservas.
+[Arquitectura y operación de Reservas](docs/reservas.md).
 
 ## Ejecutar
 
@@ -241,6 +242,11 @@ Las pruebas usan PostgreSQL real con Testcontainers y generan claves temporales.
 La integración HTTP se prueba con respuestas simuladas y servidores locales,
 incluyendo propagación del JWT, errores, timeout, redirecciones y operación local
 cuando Catálogo no está disponible. No requieren credenciales ni VPN de cátedra.
+La suite cubre registro, login, disponibilidad, creación y confirmación de holds,
+listado y cancelación con aislamiento por usuario, y recuperación de pendientes.
+También comprueba que una caída de PostgreSQL devuelve `503` en las consultas
+autenticadas que requieren persistencia y que repetir un evento de Kafka tras un
+acuse fallido conserva el resultado ya aplicado.
 Para el entorno Java aislado opcional: `./scripts/setup-java-env.sh /ruta/al/jdk-25`
 y después `./mvnw-local verify`.
 
