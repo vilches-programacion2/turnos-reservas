@@ -2,7 +2,8 @@
 
 Backend de usuarios y reservas: Java 25, Spring Boot, PostgreSQL y Flyway.
 Implementa registro, autenticación con JWT RS256 e integración HTTP con catálogo.
-El flujo de reservas sigue en desarrollo.
+Gestiona disponibilidad, bloqueos temporales, confirmación y cancelación de reservas.
+[Arquitectura y operación de Reservas](docs/reservas.md).
 
 ## Ejecutar
 
